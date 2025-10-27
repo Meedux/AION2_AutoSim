@@ -7,6 +7,8 @@ from logger import configure_logging, get_logger
 from player import sample_player
 from map import sample_map
 from autoplay import AutoPlayController, AIState
+from macro import sample_macro_controller
+from window_manager import WindowManager
 
 
 logger = get_logger(__name__)
@@ -16,7 +18,9 @@ def run_simulation(ticks: int = 10, tick_delay: float = 0.5) -> None:
     configure_logging()
     player = sample_player()
     grid = sample_map()
-    autoplay = AutoPlayController(player, grid)
+    macro = sample_macro_controller()
+    wm = WindowManager(safe_mode=True)
+    autoplay = AutoPlayController(player, grid, macro=macro, window_manager=wm)
 
     logger.info("Starting simulation for %d ticks", ticks)
     for t in range(ticks):

@@ -47,13 +47,6 @@ Third-party packages and macro automation
   your OS (be careful — this affects other windows and may be detected by
   some game clients).
 
-Ethical and legal note
-----------------------
-Automating control of commercial games can violate Terms of Service or local
-laws. This repository is intended for educational experiments, local
-simulation, and research. Do not use these tools to gain an unfair advantage
-in online games or to interact with services where automation is prohibited.
-
 Reference for keypress simulation
 --------------------------------
 This project references common approaches to simulate keypresses in Python

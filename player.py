@@ -7,7 +7,7 @@ features can be filled in later.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Dict, List, Callable
+from typing import Dict, List, Callable, Tuple
 import time
 
 
@@ -39,6 +39,8 @@ class Player:
     skills: Dict[str, Skill] = field(default_factory=dict)
     inventory: Dict[str, int] = field(default_factory=dict)
     stamina: float = 100.0
+    pos: Tuple[int, int] = (0, 0)
+    gold: int = 0
 
     def is_alive(self) -> bool:
         return self.hp > 0

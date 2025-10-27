@@ -7,4 +7,6 @@ torch>=1.13 ; python_version >= '3.8'  # optional - for advanced ML experiments
 pyautogui>=0.9.53  # input automation (use with caution)
 pynput>=1.7.6      # alternative input automation library
 opencv-python>=4.7.0  # optional - for visual sensing / CV
+pygetwindow>=0.0.9  # window listing and activation (lightweight)
+pywinauto>=0.7.4    # optional - more powerful windows automation
 
