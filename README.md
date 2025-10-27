@@ -30,12 +30,12 @@ Optional GUI:
 python gui.py
 ```
 
-Next steps
+<!-- Next steps
 - Implement pathfinding (A*, BFS) in `map.py` or a new `pathfinding.py`.
 - Flesh out combat formulas and add skill effects.
 - Implement more complete AI states and movement in `autoplay.py`.
 - Add unit tests and CI, plus a small dataset and an ML experiment to tune
-  skill rotations in `ml_adapter.py`.
+  skill rotations in `ml_adapter.py`. -->
 
 Third-party packages and macro automation
 ---------------------------------------
