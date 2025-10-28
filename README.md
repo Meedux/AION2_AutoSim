@@ -1,58 +1,40 @@
-# AION Auto-Play / Auto-Hunt Simulation (Boilerplate)
+# AION2_AutoSim
 
-This repository contains a skeleton Python project to simulate auto-hunt and
-auto-play features in an MMORPG environment for educational purposes. The
-implementation is intentionally minimal and documented to make it easy to
-extend.
+Automated real-time combat macro for a 3D game using a real object detection model (YOLO/Ultralytics). This project provides:
 
-Structure
-- `player.py` — Player and Skill dataclasses, sample player factory.
-- `map.py` — GridMap, Enemy, ResourceNode and sample map generator.
-- `combat.py` — CombatEngine skeleton with placeholder damage logic.
-- `autoplay.py` — AutoPlayController implementing auto_hunt, auto_heal, loot.
-- `logger.py` — Central logging configuration helper.
-- `main.py` — Simple runner to execute a short simulation loop.
-- `gui.py` — Minimal Tkinter GUI placeholder for visualization.
-- `ml_adapter.py` — Placeholder adapter for ML integration (skill ordering).
+- A PyQt5 dark-themed UI with game window selection, start/stop controls, an embedded log terminal, and overlay debugging.
+- Real-time capture of the selected game window and inference pipeline using Ultralytics YOLO (user-provided or trained weights).
+- Automatic double-clicking at detected target locations (e.g., "Highland Sparkle").
+- Transparent overlay showing click positions and detection bounding boxes for debugging.
 
-How to run
+IMPORTANT: This repository provides a real inference and automation pipeline — you must provide/train a model that recognizes the in-game mob label (e.g., "Highland Sparkle"). See the Training and Usage sections.
 
-1. Ensure you're using Python 3.8+.
-2. From the project directory run:
+Getting started
+1. Create a Python 3.10+ virtual environment and install dependencies:
+
+```powershell
+python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install -r requirements.txt
+```
+
+2. Provide a YOLO-compatible weights file (Ultralytics YOLOv8 recommended) that has a class for the mob name you want to detect (e.g. "Highland Sparkle"). Place the weights file somewhere and note the path.
+
+3. Run the app:
 
 ```powershell
 python main.py
 ```
 
-Optional GUI:
+Training guidance
+- Use the Ultralytics training workflow to collect screenshots of the mob from your game in the same resolution and camera setups you will run inference in. Label with the exact class name you will configure in the UI (e.g., "Highland Sparkle").
+- Train a YOLOv8 model and export weights (best.pt) and use that path in the UI.
 
-```powershell
-python gui.py
-```
+Usage notes and limitations
+- Some games use exclusive DirectX surfaces; capturing may require running the game in windowed or borderless window mode.
+- Synthetic input (pyautogui) may be blocked by some anti-cheat systems — test in a controlled environment.
+- This tool does real-time vision and input automation. Use responsibly and with permission from the game provider.
 
-<!-- Next steps
-- Implement pathfinding (A*, BFS) in `map.py` or a new `pathfinding.py`.
-- Flesh out combat formulas and add skill effects.
-- Implement more complete AI states and movement in `autoplay.py`.
-- Add unit tests and CI, plus a small dataset and an ML experiment to tune
-  skill rotations in `ml_adapter.py`. -->
-
-Third-party packages and macro automation
----------------------------------------
-- The project can use the packages listed in `requirements.txt` for ML and
-  automation experiments (numpy, scikit-learn, torch, pyautogui, pynput, opencv).
-- A `macro.py` adapter is included to exercise input automation in a safe
-  manner. By default `MacroController` runs in `safe_mode=True` and only logs
-  actions. Set `safe_mode=False` if you intentionally want to send events to
-  your OS (be careful — this affects other windows and may be detected by
-  some game clients).
-
-Reference for keypress simulation
---------------------------------
-This project references common approaches to simulate keypresses in Python
-for educational purposes. One useful thread discussing approaches (pyautogui,
-pynput, win32 APIs) is on StackOverflow: see the link you provided when using
-these modules responsibly.
-
-License
-Educational / template code — adapt as needed.
+Files
+- `main.py` — main PyQt application, UI and orchestration.
+- `detection.py` — capture + model inference loop.
+- `overlay.py` — transparent overlay window drawing debugging visuals.
+- `utils.py` — helper functions for window enumeration, coordinate mapping, and safe click implementation.

@@ -1,12 +1,11 @@
-# Requirements for optional components and macro automation
-# Note: Some packages (pyautogui, pynput) can send input to your OS. Use
-# them only for local, ethical testing and set safe_mode in `macro.py`.
-numpy>=1.24
-scikit-learn>=1.2
-torch>=1.13 ; python_version >= '3.8'  # optional - for advanced ML experiments
-pyautogui>=0.9.53  # input automation (use with caution)
-pynput>=1.7.6      # alternative input automation library
-opencv-python>=4.7.0  # optional - for visual sensing / CV
-pygetwindow>=0.0.9  # window listing and activation (lightweight)
-pywinauto    # optional - more powerful windows automation
-
+pyqt5>=5.15.0
+opencv-python>=4.5.5
+numpy>=1.21.0
+torch>=1.12.0
+torchvision>=0.13.0
+ultralytics>=8.0.0
+mss>=6.1.0
+pywin32>=302
+pyautogui>=0.9.53
+pynput>=1.7.3
+loguru>=0.6.0
