@@ -240,14 +240,10 @@ class MainWindow(QtWidgets.QMainWindow):
         logger.info(f'Detected target {target["label"]} conf={target["conf"]:.2f} at {x},{y} - clicking')
         # Overlay update
         if self.overlay and self.overlay.isVisible():
-            # Map detections to overlay coords (they are in capture window coords)
-            viz = []
-            for d in detections:
-                bx = d['box']
-                label = d['label']
-                viz.append((bx, label))
+            # Pass full detection dicts to overlay; convert absolute screen points to overlay coords
+            # Detections' 'box' coordinates are relative to the capture image, so we can pass them directly.
             pts = [(screen_point[0] - self.capture_rect[0], screen_point[1] - self.capture_rect[1])]
-            self.overlay.update_visuals(viz, pts)
+            self.overlay.update_visuals(detections, pts)
 
         # Perform double click
         try:
@@ -256,7 +252,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 bring_window_to_front(self.selected_hwnd)
                 time.sleep(0.02)
             pyautogui.FAILSAFE = False
-            pyautogui.doubleClick(x, y)
+            # pyautogui.doubleClick(x, y)  # DISABLED: Just overlay for now
             self._click_history.append(((x, y), time.time()))
         except Exception as e:
             logger.exception('Click failed: {}', e)

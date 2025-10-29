@@ -38,3 +38,12 @@ Files
 - `detection.py` — capture + model inference loop.
 - `overlay.py` — transparent overlay window drawing debugging visuals.
 - `utils.py` — helper functions for window enumeration, coordinate mapping, and safe click implementation.
+
+
+For Considerations:
+
+ - Consider using Calibration when running the program first in order for fixed points to be detected more accurately
+ - A Pop Up should first appear when hitting start so that in the pop up it will inform the user to make sure that the game window is already opened and that you are already in the game and logged in to the correct character and also inform the user for UI Calibration
+ - Figure out how to automatically move the Player Character using the Detected Map
+ - Optimization
+ - Configurable Macro Inputs
