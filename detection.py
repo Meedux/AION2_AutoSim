@@ -56,25 +56,40 @@ class DetectionController:
                 # encode to jpeg bytes
                 jbytes = jpeg_bytes_from_bgr(frame, quality=70)
                 resp = self.client.run_workflow_on_bytes(self.workspace_name, self.workflow_id, jbytes, use_cache=True)
-                preds = self.client.parse_predictions(resp)
-                # convert center-based to top-left if needed
+                # Log a short preview of raw response for debugging
+                try:
+                    self.log("Raw workflow response: " + (str(resp)[:1000] + '...') if isinstance(resp, (dict, list, str)) else "(non-json response)")
+                except Exception:
+                    pass
+
+                # sent frame size (the one we provided to the workflow)
+                sent_w, sent_h = (w, h)
+                # original window size (overlay size)
+                orig_w, orig_h = self.capture.get_window_size() or (w, h)
+
+                preds = self.client.parse_predictions(resp, frame_size=(sent_w, sent_h))
+
+                # scale predictions from sent frame size to original window size
+                sx = orig_w / sent_w if sent_w and orig_w else 1.0
+                sy = orig_h / sent_h if sent_h and orig_h else 1.0
+
                 conv = []
                 for p in preds:
                     try:
-                        cx = float(p.get("x", 0))
-                        cy = float(p.get("y", 0))
-                        pw = float(p.get("width", 0))
-                        ph = float(p.get("height", 0))
-                        x = cx - pw / 2
-                        y = cy - ph / 2
+                        # parser returns top-left x,y,width,height relative to sent frame
+                        x = float(p.get("x", 0)) * sx
+                        y = float(p.get("y", 0)) * sy
+                        pw = float(p.get("width", 0)) * sx
+                        ph = float(p.get("height", 0)) * sy
                         conv.append({"x": x, "y": y, "width": pw, "height": ph, "class": p.get("class"), "confidence": p.get("confidence")})
                     except Exception:
                         continue
+
                 self._detections = conv
-                self.log(f"Received {len(conv)} detections")
-                # push to overlay
+                self.log(f"Received {len(conv)} detections (scaled to overlay {orig_w}x{orig_h})")
+                # push to overlay (pass overlay target size as orig window size)
                 try:
-                    self.overlay_update(self._detections, self._frame_size)
+                    self.overlay_update(self._detections, (orig_w, orig_h))
                 except Exception:
                     pass
             except Exception as e:

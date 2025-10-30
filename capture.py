@@ -10,7 +10,7 @@ from utils import get_window_rect
 
 
 class CaptureWorker(threading.Thread):
-    def __init__(self, hwnd: int, target_fps: int = 15, resize_max: int = 960):
+    def __init__(self, hwnd: int, target_fps: int = 30, resize_max: int = 960):
         super().__init__(daemon=True)
         self.hwnd = hwnd
         self.target_fps = target_fps
@@ -19,6 +19,7 @@ class CaptureWorker(threading.Thread):
         self.running.clear()
         self.latest_frame = None
         self._lock = threading.Lock()
+        self._last_window_size = (0, 0)
 
     def start_capture(self):
         self.running.set()
@@ -46,6 +47,8 @@ class CaptureWorker(threading.Thread):
                 time.sleep(0.5)
                 continue
             left, top, w, h = rect
+            # store original window size so callers can map coords back
+            self._last_window_size = (w, h)
             monitor = {"left": left, "top": top, "width": w, "height": h}
             img = sct.grab(monitor)
             # mss returns BGRA
@@ -61,3 +64,7 @@ class CaptureWorker(threading.Thread):
             with self._lock:
                 self.latest_frame = frame
             time.sleep(interval)
+
+    def get_window_size(self):
+        """Return the last known original window (width, height)."""
+        return self._last_window_size
