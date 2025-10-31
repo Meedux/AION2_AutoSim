@@ -21,6 +21,8 @@ class OverlayWindow(QtWidgets.QWidget):
 		self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
 		self.detections: List[dict] = []
 		self.target_size = (0, 0)
+		# automation status displayed on overlay (ON/OFF)
+		self._automation_enabled = False
 
 	def make_clickthrough(self):
 		hwnd = int(self.winId())
@@ -31,6 +33,10 @@ class OverlayWindow(QtWidgets.QWidget):
 	def update_overlay(self, detections: List[dict], target_size: Tuple[int, int]):
 		self.detections = detections
 		self.target_size = target_size
+		self.update()
+
+	def set_automation_enabled(self, enabled: bool):
+		self._automation_enabled = bool(enabled)
 		self.update()
 
 	def paintEvent(self, event: QtGui.QPaintEvent):
@@ -75,4 +81,15 @@ class OverlayWindow(QtWidgets.QWidget):
 			painter.fillRect(bg_x, bg_y, tw, th, text_bg)
 			painter.setPen(QtGui.QColor(255, 255, 255))
 			painter.drawText(bg_x + 3, text_y, text)
+
+		# Draw automation status at top-left of the overlay
+		status_text = "AUTOMATION: ON" if self._automation_enabled else "AUTOMATION: OFF"
+		status_color = QtGui.QColor(0, 180, 0) if self._automation_enabled else QtGui.QColor(200, 0, 0)
+		metrics = painter.fontMetrics()
+		tw = metrics.horizontalAdvance(status_text) + 8
+		th = metrics.height() + 6
+		# background box
+		painter.fillRect(6, 6, tw, th, QtGui.QColor(0, 0, 0, 160))
+		painter.setPen(status_color)
+		painter.drawText(10, 6 + th - 4, status_text)
 

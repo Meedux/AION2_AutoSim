@@ -5,6 +5,8 @@ from typing import Callable
 from loguru import logger
 from capture import CaptureWorker
 from model_client import LocalModelClient
+from action_planner import ActionPlanner
+from utils import get_window_rect
 # utils helpers (no jpeg encode needed for local model)
 
 
@@ -23,6 +25,9 @@ class DetectionController:
         self.capture = CaptureWorker(hwnd=hwnd, target_fps=max(5, fps * 2), resize_max=None)
         # local model uses models/aion.pt in repo
         self.client = LocalModelClient(weights_path="models/aion.pt")
+        # action planner will perform input actions (double-click / movement)
+        # Enabled by default per user request; main window will also apply its stored preference.
+        self.action_planner = ActionPlanner(hwnd=hwnd, enabled=True)
 
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._running = threading.Event()
@@ -82,6 +87,18 @@ class DetectionController:
                     self.overlay_update(self._detections, (orig_w, orig_h))
                 except Exception:
                     pass
+                # execute action planner (navigate / attack) -- pass full window rect
+                try:
+                    rect = get_window_rect(self.hwnd)
+                    if rect:
+                        left, top, rw, rh = rect
+                        self.action_planner.plan_and_execute(self._detections, (left, top, rw, rh))
+                    else:
+                        # fallback: use origin at (0,0) + orig sizes
+                        self.action_planner.plan_and_execute(self._detections, (0, 0, orig_w, orig_h))
+                except Exception as e:
+                    # action planner errors should not stop the detection loop
+                    self.log(f"Action planner error: {e}")
             except Exception as e:
                 self.log(f"Inference error: {e}")
             time.sleep(interval)

@@ -53,8 +53,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log_view = QtWidgets.QPlainTextEdit()
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view, stretch=1)
+        # track desired automation state (applies to controller when created)
+        # Default automation ON as requested
+        self._automation_enabled = True
         self._overlay = OverlayWindow()
+        # ensure overlay matches the desired automation default immediately
+        try:
+            self._overlay.set_automation_enabled(self._automation_enabled)
+        except Exception:
+            pass
         self._controller = None
+        # start a global hotkey listener for Pause/Break to toggle automation
+        self._hotkey_thread = None
+        self._start_hotkey_listener()
         self._pos_timer = QtCore.QTimer(self)
         self._pos_timer.setInterval(300)  # ms
         self._pos_timer.timeout.connect(self._reposition_overlay)
@@ -89,6 +100,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # create controller (local model)
         self._controller = DetectionController(hwnd=hwnd, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=6)
+        # apply stored automation preference
+        try:
+            self._controller.action_planner.set_enabled(self._automation_enabled)
+        except Exception:
+            pass
         self._controller.start()
         # start periodic overlay repositioning to follow the target window
         self._pos_timer.start()
@@ -116,6 +132,134 @@ class MainWindow(QtWidgets.QMainWindow):
         if rect:
             left, top, w, h = rect
             self._overlay.setGeometry(left, top, w, h)
+
+    def toggle_automation(self):
+        # toggle desired automation state and apply to controller if present
+        self._automation_enabled = not self._automation_enabled
+        enabled = self._automation_enabled
+        # update overlay indicator
+        try:
+            self._overlay.set_automation_enabled(enabled)
+        except Exception:
+            pass
+        # apply to running controller
+        if self._controller:
+            try:
+                self._controller.action_planner.set_enabled(enabled)
+            except Exception:
+                pass
+
+    def _start_hotkey_listener(self):
+        # Start background thread that registers a global Delete hotkey and
+        # invokes toggle_automation when pressed.
+        import threading, ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        WM_HOTKEY = 0x0312
+        VK_DELETE = 0x2E
+
+        def _hotkey_thread_fn():
+            HOTKEY_ID = 1
+            # Try RegisterHotKey first (simple, preferred)
+            if user32.RegisterHotKey(None, HOTKEY_ID, 0, VK_DELETE):
+                # registration succeeded
+                try:
+                    self.log("Hotkey registered: Delete (RegisterHotKey)")
+                except Exception:
+                    pass
+                msg = wintypes.MSG()
+                try:
+                    while True:
+                        b = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                        if b == 0:
+                            break
+                        if msg.message == WM_HOTKEY:
+                            try:
+                                QtCore.QMetaObject.invokeMethod(self, "toggle_automation", QtCore.Qt.QueuedConnection)
+                            except Exception:
+                                pass
+                        user32.TranslateMessage(ctypes.byref(msg))
+                        user32.DispatchMessageW(ctypes.byref(msg))
+                finally:
+                    try:
+                        user32.UnregisterHotKey(None, HOTKEY_ID)
+                    except Exception:
+                        pass
+                return
+
+            # If RegisterHotKey failed, fall back to a low-level keyboard hook
+            try:
+                self.log("RegisterHotKey failed; falling back to low-level keyboard hook")
+            except Exception:
+                pass
+
+            # WH_KEYBOARD_LL hook to catch Delete presses
+            WH_KEYBOARD_LL = 13
+            WM_KEYDOWN = 0x0100
+
+            kernel32 = ctypes.windll.kernel32
+
+            # define KBDLLHOOKSTRUCT
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [("vkCode", wintypes.DWORD),
+                            ("scanCode", wintypes.DWORD),
+                            ("flags", wintypes.DWORD),
+                            ("time", wintypes.DWORD),
+                            ("dwExtraInfo", wintypes.ULONG_PTR)]
+
+            LowLevelKeyboardProc = ctypes.WINFUNCTYPE(wintypes.LRESULT, wintypes.INT, wintypes.WPARAM, wintypes.LPARAM)
+
+            @LowLevelKeyboardProc
+            def _ll_keyboard_proc(nCode, wParam, lParam):
+                try:
+                    if nCode >= 0 and wParam == WM_KEYDOWN:
+                        kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                        if kb.vkCode == VK_DELETE:
+                            try:
+                                QtCore.QMetaObject.invokeMethod(self, "toggle_automation", QtCore.Qt.QueuedConnection)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+                return user32.CallNextHookEx(None, nCode, wParam, lParam)
+
+            # install hook
+            hook_id = user32.SetWindowsHookExW(WH_KEYBOARD_LL, _ll_keyboard_proc, kernel32.GetModuleHandleW(None), 0)
+            if not hook_id:
+                try:
+                    self.log("Failed to install low-level keyboard hook for Delete key")
+                except Exception:
+                    pass
+                return
+
+            # message loop to keep the hook alive
+            msg = wintypes.MSG()
+            try:
+                while True:
+                    b = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                    if b == 0:
+                        break
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+            finally:
+                try:
+                    user32.UnhookWindowsHookEx(hook_id)
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_hotkey_thread_fn, daemon=True)
+        t.start()
+        self._hotkey_thread = t
+
+    def closeEvent(self, event):
+        # ensure controller stopped and leave
+        try:
+            if self._controller:
+                self._controller.stop()
+        except Exception:
+            pass
+        return super().closeEvent(event)
 
 
 def run_app():
