@@ -1,4 +1,8 @@
-"""Main GUI application. Provides window selection, Roboflow endpoint input, start/stop controls, and a log terminal."""
+
+"""Main GUI application for AION.
+Uses a local YOLO weight (models/aion.pt) to run realtime detections
+and draw a click-through overlay on the selected game window.
+"""
 import sys
 from PySide6 import QtWidgets, QtCore
 from loguru import logger
@@ -10,7 +14,7 @@ from detection import DetectionController
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AION - Roboflow Live Detector")
+        self.setWindowTitle("AION - Local YOLO Live Detector")
         self.resize(900, 640)
 
         central = QtWidgets.QWidget()
@@ -27,9 +31,8 @@ class MainWindow(QtWidgets.QMainWindow):
         h.addWidget(self.refresh_btn)
         form.addRow("Game window:", h)
 
-        # Settings are hardcoded (workspace= aion-rgnb3, workflow= detect-count-and-visualize,
-        # api_key is embedded). The input fields were removed intentionally.
-        info = QtWidgets.QLabel("Using hardcoded Roboflow settings: workspace= aion-rgnb3, workflow= detect-count-and-visualize")
+        # Using local model weights placed at models/aion.pt
+        info = QtWidgets.QLabel("Using local model weights: models/aion.pt (Ultralytics YOLO)")
         info.setWordWrap(True)
         form.addRow("Settings:", info)
 
@@ -74,11 +77,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log("No window selected")
             return
         hwnd = self.win_combo.currentData()
-        # Use hardcoded workspace/workflow/api_key as requested
-        workspace = "aion-rgnb3"
-        workflow = "detect-count-and-visualize"
-        api_key = "nxMk5er0X252GqKpQwBY"
-
         rect = get_window_rect(hwnd)
         if not rect:
             self.log("Unable to get window rect")
@@ -89,8 +87,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._overlay.show()
         self._overlay.make_clickthrough()
 
-        # create controller
-        self._controller = DetectionController(hwnd=hwnd, workspace_name=workspace, workflow_id=workflow, api_key=api_key, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=6)
+        # create controller (local model)
+        self._controller = DetectionController(hwnd=hwnd, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=6)
         self._controller.start()
         # start periodic overlay repositioning to follow the target window
         self._pos_timer.start()

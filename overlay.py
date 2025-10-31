@@ -61,7 +61,18 @@ class OverlayWindow(QtWidgets.QWidget):
 			metrics = painter.fontMetrics()
 			tw = metrics.horizontalAdvance(text) + 6
 			th = metrics.height() + 2
-			painter.fillRect(x, max(0, y - th), tw, th, text_bg)
+			# Prefer drawing the label above the box; if it would be off-screen, draw below the box
+			if y - th >= 0:
+				bg_y = y - th
+				text_y = y - 3
+			else:
+				bg_y = y + hh
+				text_y = y + hh + th - 3
+			# ensure within widget bounds horizontally
+			bg_x = max(0, x)
+			if bg_x + tw > self.width():
+				bg_x = max(0, self.width() - tw)
+			painter.fillRect(bg_x, bg_y, tw, th, text_bg)
 			painter.setPen(QtGui.QColor(255, 255, 255))
-			painter.drawText(x + 3, max(0, y - 3), text)
+			painter.drawText(bg_x + 3, text_y, text)
 

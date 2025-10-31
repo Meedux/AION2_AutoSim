@@ -4,25 +4,25 @@ import time
 from typing import Callable
 from loguru import logger
 from capture import CaptureWorker
-from roboflow_client import WorkflowClient
-from utils import jpeg_bytes_from_bgr
+from model_client import LocalModelClient
+# utils helpers (no jpeg encode needed for local model)
 
 
 class DetectionController:
-    def __init__(self, hwnd: int, workspace_name: str, workflow_id: str, api_key: str, overlay_update: Callable, log_fn: Callable, fps: int = 10):
+    def __init__(self, hwnd: int, overlay_update: Callable, log_fn: Callable, fps: int = 10):
         """overlay_update(detections, (w,h)) will be called on each new result or tick.
         log_fn(text) will be called to output logs to UI.
         """
         self.hwnd = hwnd
-        self.workspace_name = workspace_name
-        self.workflow_id = workflow_id
-        self.api_key = api_key
         self.overlay_update = overlay_update
         self.log = log_fn
         self.fps = fps
 
-        self.capture = CaptureWorker(hwnd=hwnd, target_fps=max(5, fps*2), resize_max=960)
-        self.client = WorkflowClient(api_key=api_key)
+        # keep capture at original size (no forced resize) to preserve mapping accuracy;
+        # we'll make a resized copy for the model if needed inside the model client.
+        self.capture = CaptureWorker(hwnd=hwnd, target_fps=max(5, fps * 2), resize_max=None)
+        # local model uses models/aion.pt in repo
+        self.client = LocalModelClient(weights_path="models/aion.pt")
 
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._running = threading.Event()
@@ -53,30 +53,20 @@ class DetectionController:
             h, w = frame.shape[:2]
             self._frame_size = (w, h)
             try:
-                # encode to jpeg bytes
-                jbytes = jpeg_bytes_from_bgr(frame, quality=70)
-                resp = self.client.run_workflow_on_bytes(self.workspace_name, self.workflow_id, jbytes, use_cache=True)
-                # Log a short preview of raw response for debugging
-                try:
-                    self.log("Raw workflow response: " + (str(resp)[:1000] + '...') if isinstance(resp, (dict, list, str)) else "(non-json response)")
-                except Exception:
-                    pass
-
-                # sent frame size (the one we provided to the workflow)
-                sent_w, sent_h = (w, h)
-                # original window size (overlay size)
+                # We run the local model on a resized copy for speed, then map detections
+                # back to the original window coordinates.
                 orig_w, orig_h = self.capture.get_window_size() or (w, h)
+                frame_for_model = frame.copy()
+                # Let the model client decide resizing via its imgsz; but we will pass the frame_for_model as-is.
+                preds = self.client.predict(frame_for_model)
 
-                preds = self.client.parse_predictions(resp, frame_size=(sent_w, sent_h))
-
-                # scale predictions from sent frame size to original window size
+                sent_h, sent_w = frame_for_model.shape[:2]
                 sx = orig_w / sent_w if sent_w and orig_w else 1.0
                 sy = orig_h / sent_h if sent_h and orig_h else 1.0
 
                 conv = []
                 for p in preds:
                     try:
-                        # parser returns top-left x,y,width,height relative to sent frame
                         x = float(p.get("x", 0)) * sx
                         y = float(p.get("y", 0)) * sy
                         pw = float(p.get("width", 0)) * sx
