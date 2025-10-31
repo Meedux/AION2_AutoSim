@@ -14,7 +14,7 @@ from detection import DetectionController
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AION - Local YOLO Live Detector")
+        self.setWindowTitle("AION Autoplay")
         self.resize(900, 640)
 
         central = QtWidgets.QWidget()
