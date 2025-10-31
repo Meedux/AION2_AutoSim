@@ -42,6 +42,18 @@ SendInput = ctypes.windll.user32.SendInput
 # pointer to use for dwExtraInfo (avoids passing None)
 _DWEXTRA = ctypes.pointer(_UINTPTR(0))
 
+# Try to use pydirectinput (game-friendly) if available. If not, fall back to SendInput-based methods above.
+USE_PYD = False
+try:
+    import pydirectinput as pdi
+    # pydirectinput has a default pause; disable it for realtime control
+    pdi.PAUSE = 0
+    pdi.FAILSAFE = False
+    USE_PYD = True
+except Exception:
+    pdi = None
+    USE_PYD = False
+
 def focus_window(hwnd: int):
     """Attempt to reliably bring the target window to foreground.
 
@@ -82,18 +94,48 @@ def _send_input(inp: INPUT):
     return SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
 def key_down(vk: int):
+    if USE_PYD:
+        # map ASCII letters to pydirectinput key names
+        try:
+            if 65 <= vk <= 90 or 97 <= vk <= 122:
+                k = chr(vk).lower()
+            else:
+                k = None
+        except Exception:
+            k = None
+        if k:
+            pdi.keyDown(k)
+            return 1
     ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0, time=0, dwExtraInfo=_DWEXTRA)
     ii = INPUT_I(); ii.ki = ki
     inp = INPUT(type=1, ii=ii)
     return _send_input(inp)
 
 def key_up(vk: int):
+    if USE_PYD:
+        try:
+            if 65 <= vk <= 90 or 97 <= vk <= 122:
+                k = chr(vk).lower()
+            else:
+                k = None
+        except Exception:
+            k = None
+        if k:
+            pdi.keyUp(k)
+            return 1
     ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0x0002, time=0, dwExtraInfo=_DWEXTRA)  # KEYEVENTF_KEYUP
     ii = INPUT_I(); ii.ki = ki
     inp = INPUT(type=1, ii=ii)
     return _send_input(inp)
 
 def tap_key(vk: int, hold: float = 0.06):
+    if USE_PYD:
+        try:
+            k = chr(vk).lower()
+            pdi.press(k)
+            return
+        except Exception:
+            pass
     key_down(vk)
     time.sleep(hold)
     key_up(vk)
@@ -106,12 +148,24 @@ def move_mouse_to_screen(x_px: int, y_px: int):
     # map to 0..65535 using (width-1)/(height-1) to match MSDN guidance
     ax = int(x_px * 65535 / max(1, sx - 1)) if sx > 1 else 0
     ay = int(y_px * 65535 / max(1, sy - 1)) if sy > 1 else 0
+    if USE_PYD:
+        try:
+            pdi.moveTo(x_px, y_px)
+            return 1
+        except Exception:
+            pass
     mi = MOUSEINPUT(dx=ax, dy=ay, mouseData=0, dwFlags=win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE, time=0, dwExtraInfo=_DWEXTRA)
     ii = INPUT_I(); ii.mi = mi
     inp = INPUT(type=0, ii=ii)
     return _send_input(inp)
 
 def left_click():
+    if USE_PYD:
+        try:
+            pdi.click()
+            return 1
+        except Exception:
+            pass
     mi_down = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=win32con.MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=_DWEXTRA)
     ii = INPUT_I(); ii.mi = mi_down
     inp_down = INPUT(type=0, ii=ii)
@@ -124,6 +178,13 @@ def left_click():
 
 def double_click_at(x_px: int, y_px: int, inter: float = 0.06):
     # move then double click
+    if USE_PYD:
+        try:
+            pdi.moveTo(x_px, y_px)
+            pdi.doubleClick()
+            return 1
+        except Exception:
+            pass
     move_mouse_to_screen(x_px, y_px)
     # small pause to allow the OS to move the cursor
     time.sleep(0.03)
@@ -134,6 +195,12 @@ def double_click_at(x_px: int, y_px: int, inter: float = 0.06):
 
 def click_at(x_px: int, y_px: int):
     """Move the mouse to screen coords and perform a single left click."""
+    if USE_PYD:
+        try:
+            pdi.click(x=x_px, y=y_px)
+            return 1
+        except Exception:
+            pass
     move_mouse_to_screen(x_px, y_px)
     time.sleep(0.02)
     left_click()

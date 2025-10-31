@@ -21,7 +21,46 @@ class LocalModelClient:
         if not os.path.exists(weights_path):
             raise FileNotFoundError(f"Weights not found: {weights_path}")
         self.weights_path = weights_path
-        self.model = YOLO(weights_path)
+        # Try the straightforward load first (ultralytics expects a full checkpoint)
+        try:
+            self.model = YOLO(weights_path)
+        except Exception as ex:
+            # Fallback: some exported .pt files contain only a state_dict (OrderedDict).
+            # In that case, load the state dict with torch and create a model from
+            # a default config (yolov8n) and load the state dict into it.
+            try:
+                import torch
+                from collections import OrderedDict
+                ckpt = torch.load(weights_path, map_location="cpu")
+                # ckpt may be an OrderedDict (state_dict) or a dict containing 'model'
+                if isinstance(ckpt, OrderedDict):
+                    state_dict = ckpt
+                elif isinstance(ckpt, dict) and "model" in ckpt and isinstance(ckpt["model"], OrderedDict):
+                    state_dict = ckpt["model"]
+                else:
+                    # Unknown checkpoint format; re-raise original exception
+                    raise
+
+                # Instantiate a minimal YOLO model (yolov8n) and load state dict
+                # The ultralytics package exposes model config names like 'yolov8n.yaml'
+                base_model = YOLO("yolov8n.yaml")
+                # Attempt to load state dict into the underlying torch model
+                try:
+                    base_model.model.load_state_dict(state_dict)
+                    self.model = base_model
+                except Exception:
+                    # If that fails, try to patch keys (strip 'model.' prefixes)
+                    new_sd = OrderedDict()
+                    for k, v in state_dict.items():
+                        nk = k
+                        if nk.startswith("model."):
+                            nk = nk[len("model."):]
+                        new_sd[nk] = v
+                    base_model.model.load_state_dict(new_sd)
+                    self.model = base_model
+            except Exception:
+                # re-raise the original error to surface the failure
+                raise ex
         # device selection handled by ultralytics automatically; user can set CUDA env or torch device
         self.imgsz = imgsz
 
