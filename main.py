@@ -4,6 +4,7 @@ Uses a local YOLO weight (models/aion.pt) to run realtime detections
 and draw a click-through overlay on the selected game window.
 """
 import sys
+import os
 import ctypes
 from PySide6 import QtWidgets, QtCore
 from loguru import logger
@@ -24,26 +25,21 @@ def is_admin():
 def run_as_admin():
     """Restart the program with administrator privileges."""
     try:
-        if sys.argv[0].endswith('.py'):
-            # Running as Python script
-            ctypes.windll.shell32.ShellExecuteW(
-                None, 
-                "runas", 
-                sys.executable, 
-                ' '.join([f'"{arg}"' for arg in sys.argv]), 
-                None, 
-                1
-            )
-        else:
-            # Running as executable
-            ctypes.windll.shell32.ShellExecuteW(
-                None, 
-                "runas", 
-                sys.executable, 
-                ' '.join([f'"{arg}"' for arg in sys.argv[1:]]), 
-                None, 
-                1
-            )
+        # Build the full command line: script path + any additional arguments
+        # sys.argv[0] is the script being run (main.py)
+        script_path = os.path.abspath(sys.argv[0])
+        # Build quoted argument string including the script itself
+        args = f'"{script_path}"'
+        if len(sys.argv) > 1:
+            args += ' ' + ' '.join([f'"{arg}"' for arg in sys.argv[1:]])
+        
+        # Use the current Python executable (this will be the venv interpreter when using the venv)
+        # ShellExecuteW with verb "runas" prompts for elevation and starts a new elevated process.
+        ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, args, os.getcwd(), 1)
+        # ShellExecuteW returns a value > 32 on success
+        if int(ret) <= 32:
+            raise OSError(f"ShellExecuteW failed with code {ret}")
+        # If ShellExecute succeeded we should exit this (non-elevated) process so only elevated instance runs
         sys.exit(0)
     except Exception as e:
         logger.error(f"Failed to elevate privileges: {e}")
@@ -342,4 +338,23 @@ def run_app():
 
 if __name__ == "__main__":
     logger.info("Starting AION automation with AutoHotkey input control...")
+    # REQUIRE administrator privileges - do not run without admin
+    try:
+        if not is_admin():
+            logger.info("Not running as administrator - attempting to relaunch elevated...")
+            # run_as_admin will exit on success; if it fails we MUST NOT continue
+            run_as_admin()
+            # If we reach here, elevation failed or was cancelled - EXIT IMMEDIATELY
+            logger.error("Administrator privileges are REQUIRED to run this program.")
+            logger.error("Please right-click the script and select 'Run as administrator'")
+            input("\nPress Enter to exit...")
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Admin elevation failed: {e}")
+        logger.error("Administrator privileges are REQUIRED to run this program.")
+        input("\nPress Enter to exit...")
+        sys.exit(1)
+
+    # Only reach here if running as admin
+    logger.success("✓ Running with administrator privileges")
     run_app()
