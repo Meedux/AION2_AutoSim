@@ -44,12 +44,21 @@ AI-powered automation for AION using AutoHotkey for reliable input simulation.
 
 ## 🎮 How It Works
 
-### AutoHotkey Input Simulation
-This program uses **AutoHotkey** for reliable input simulation:
-- ✅ Reliable keyboard and mouse control
-- ✅ Works with most games including AION
-- ✅ No driver installation required
-- ✅ Simple and lightweight
+### Input Methods
+
+**Primary: Windows SendInput API** (default)
+- ✅ Native Windows API for input simulation
+- ✅ Works with protected games including AION
+- ✅ Low-level input that games cannot easily block
+- ✅ No third-party dependencies or drivers needed
+- ✅ Fast and reliable
+
+**Alternative: AutoHotkey Hardware Macro** (optional)
+- ✅ True hardware-level inputs
+- ✅ Manual control via hotkeys (F9/F10/F11)
+- ✅ Runs independently in system tray
+- ✅ Available as backup method
+- 📖 See `AHK_HARDWARE_GUIDE.md` for details
 
 ### AI Detection
 - Custom YOLO model (`models/aion.pt`) for real-time object detection
@@ -81,11 +90,11 @@ AION2_AutoSim/
 
 ## 🔒 Security & Safety
 
-### AutoHotkey
-- **Official library**: Python ahk package
-- **No system modifications**: No drivers or kernel-level changes
-- **User-level**: Operates at normal user privilege level
-- **Widely used**: Trusted automation tool for Windows
+### Windows SendInput API
+- **Official Windows API**: Part of the Windows operating system
+- **No system modifications**: Uses built-in Windows functionality
+- **No external dependencies**: Pure Python + Windows API
+- **Microsoft recommended**: Official method for input simulation
 
 ## ⚙️ Configuration
 
@@ -98,21 +107,20 @@ The program now runs in **real mode** by default. Hardware inputs are sent direc
 
 ## 🐛 Troubleshooting
 
-### "AutoHotkey not found" error
-```bash
-pip install ahk
-```
-
 ### Inputs not working in game
-1. Make sure game window is selected
-2. Check that AutoHotkey is installed properly
-3. Try running the test script: `python test_ahk.py`
+1. **Run as Administrator** (required for SendInput to work with games)
+2. Make sure AION window is focused
+3. Click in the game window first to activate it
+4. Test with: `python test_sendinput.py`
+
+### Mouse/keyboard not responding
+1. Verify inputs work: `python test_sendinput.py`
+2. Check Windows permissions
+3. Disable any input blocking software
 
 ### Import errors
-Reinstall the ahk package:
 ```bash
-pip uninstall ahk
-pip install ahk
+pip install -r requirements.txt
 ```
 
 ## 📝 Development
