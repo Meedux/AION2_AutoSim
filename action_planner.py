@@ -6,13 +6,14 @@ Behavior implemented per user spec:
 - If no mobs present, find map navigation dots (heuristic: classes containing 'map'|'dot'|'red'|'enemy')
   and move the player toward the nearest dot using W/A/S/D (W forward, S back, A/D turn).
 
-This module uses `input_controller` to send OS-level inputs.
+This module uses `input_controller` to send OS-level inputs with stealth timing.
 """
 import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
 from input_controller import focus_window, double_click_at, tap_key
+from stealth_config import stealth
 import win32con
 
 
@@ -53,8 +54,9 @@ class ActionPlanner:
         self.conf_thresh = conf_thresh
         self._lock = threading.Lock()
         self._last_action = 0.0
-        self._cooldown = 0.08
+        self._cooldown = stealth.get_action_delay()  # Use stealth timing
         self._target_locked: Optional[Dict] = None
+        self._last_idle_check = time.time()
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -103,7 +105,16 @@ class ActionPlanner:
         """
         if not self.enabled:
             return
+        
+        # Check for periodic human-like idle
+        idle_duration = stealth.should_idle()
+        if idle_duration > 0:
+            time.sleep(idle_duration)
+            return
+        
         now = time.time()
+        # Randomize cooldown each action for human-like behavior
+        self._cooldown = stealth.get_action_delay()
         if now - self._last_action < self._cooldown:
             return
         self._last_action = now
@@ -114,10 +125,13 @@ class ActionPlanner:
         target = self._find_target_mob(detections)
         if target is not None:
             tx, ty = _center_of(target)
-            screen_x = int(left + tx)
-            screen_y = int(top + ty)
+            # Add human-like mouse jitter
+            jitter_x, jitter_y = stealth.get_mouse_jitter()
+            screen_x = int(left + tx + jitter_x)
+            screen_y = int(top + ty + jitter_y)
             # focus and double click repeatedly while health present
             focus_window(self.hwnd)
+            time.sleep(stealth.get_click_delay())  # Human-like delay before clicking
             # if a health bar exists for this target, lock and keep clicking until health gone
             health = self._find_health_for(target, detections)
             # Do a double click at the target

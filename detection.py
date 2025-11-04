@@ -6,6 +6,7 @@ from loguru import logger
 from capture import CaptureWorker
 from model_client import LocalModelClient
 from action_planner import ActionPlanner
+from stealth_config import stealth
 from utils import get_window_rect
 # utils helpers (no jpeg encode needed for local model)
 
@@ -18,7 +19,10 @@ class DetectionController:
         self.hwnd = hwnd
         self.overlay_update = overlay_update
         self.log = log_fn
-        self.fps = fps
+        # Use stealth FPS to reduce detection frequency and avoid anti-cheat
+        self.fps = stealth.get_detection_fps()
+        self.log(f"Detection FPS set to {self.fps} (stealth mode)")
+        logger.info(f"🕵️ Stealth mode enabled: FPS={self.fps}, randomized timing, human-like behavior")
 
         # keep capture at original size (no forced resize) to preserve mapping accuracy;
         # we'll make a resized copy for the model if needed inside the model client.

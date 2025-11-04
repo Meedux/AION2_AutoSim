@@ -330,6 +330,11 @@ def run_app():
     
     # AutoHotkey handles everything automatically - no driver installation needed!
     logger.info("✓ AutoHotkey ready for input control")
+    logger.info("🕵️ Stealth mode enabled for CryEngine anti-cheat protection")
+    logger.info("   - Randomized timing and delays")
+    logger.info("   - Human-like mouse movements")
+    logger.info("   - Reduced detection frequency (3 FPS)")
+    logger.info("   - Periodic idle behavior")
     
     win = MainWindow()
     win.show()
