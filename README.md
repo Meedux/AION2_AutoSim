@@ -1,4 +1,150 @@
-# AION2_AutoSim
+# AION Auto-Simulator
+
+AI-powered automation for AION using AutoHotkey for reliable input simulation.
+
+## ⚡ Quick Start
+
+1. **Install and Run**:
+   ```bash
+   # Option 1: Use the batch file
+   run_as_admin.bat
+   
+   # Option 2: Run directly
+   python main.py
+   ```
+
+2. **Start Automation**:
+   - Select your AION game window
+   - Click "Start" to begin automation
+   - Press DELETE for emergency stop
+
+## 🔧 Requirements
+
+- **Windows 10/11**
+- **Python 3.8+**
+- **AutoHotkey** (automatically installed via pip)
+
+## 📦 Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/Meedux/AION2_AutoSim.git
+   cd AION2_AutoSim
+   ```
+
+2. **Install Python dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Run the program**:
+   ```bash
+   python main.py
+   ```
+
+## 🎮 How It Works
+
+### AutoHotkey Input Simulation
+This program uses **AutoHotkey** for reliable input simulation:
+- ✅ Reliable keyboard and mouse control
+- ✅ Works with most games including AION
+- ✅ No driver installation required
+- ✅ Simple and lightweight
+
+### AI Detection
+- Custom YOLO model (`models/aion.pt`) for real-time object detection
+- Detects: mobs, map markers, UI elements
+- Overlay visualization with bounding boxes
+
+### Automation Logic
+- Smart mob targeting (prioritizes cursor → near → far)
+- Auto-navigation using map markers
+- Health-based attack loops
+- Emergency stop (DELETE key)
+
+## 🛠️ Architecture
+
+```
+AION2_AutoSim/
+├── main.py                    # Main application
+├── input_controller.py        # AutoHotkey input control
+├── detection.py               # AI detection loop
+├── action_planner.py          # Game action logic
+├── overlay.py                 # Visual overlay
+├── capture.py                 # Screen capture
+├── model_client.py            # YOLO model interface
+├── utils.py                   # Utility functions
+├── models/
+│   └── aion.pt               # AI model weights
+└── requirements.txt
+```
+
+## 🔒 Security & Safety
+
+### AutoHotkey
+- **Official library**: Python ahk package
+- **No system modifications**: No drivers or kernel-level changes
+- **User-level**: Operates at normal user privilege level
+- **Widely used**: Trusted automation tool for Windows
+
+## ⚙️ Configuration
+
+### Simulate Mode (Disabled by Default)
+The program now runs in **real mode** by default. Hardware inputs are sent directly to the game.
+
+### Emergency Stop
+- Press **DELETE** key at any time to stop automation
+- Works even when AION window is focused
+
+## 🐛 Troubleshooting
+
+### "AutoHotkey not found" error
+```bash
+pip install ahk
+```
+
+### Inputs not working in game
+1. Make sure game window is selected
+2. Check that AutoHotkey is installed properly
+3. Try running the test script: `python test_ahk.py`
+
+### Import errors
+Reinstall the ahk package:
+```bash
+pip uninstall ahk
+pip install ahk
+```
+
+## 📝 Development
+
+### Testing
+```bash
+# Test AutoHotkey
+python test_ahk.py
+```
+
+### Adding New Features
+1. All input functions are in `input_controller.py`
+2. Game logic is in `action_planner.py`
+3. Detection classes are in `detection.py`
+
+## 📄 License
+
+MIT License - See LICENSE file
+
+## ⚠️ Disclaimer
+
+This software is for educational purposes only. Use at your own risk. The developers are not responsible for any consequences of using this software, including but not limited to game bans or system instability.
+
+## 🙏 Credits
+
+- **AutoHotkey**: Python ahk library (https://github.com/spyoungtech/ahk)
+- **YOLO**: Ultralytics (https://github.com/ultralytics/ultralytics)
+- **Qt Framework**: Qt Company (PySide6)
+
+---
+
+## #AION2_AutoSim
 
 Automated real-time combat macro for a 3D game using a real object detection model (YOLO/Ultralytics). This project provides:
 

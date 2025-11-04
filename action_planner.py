@@ -12,7 +12,7 @@ import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
-from input_controller import focus_window, move_mouse_to_screen, double_click_at, tap_key
+from input_controller import focus_window, double_click_at, tap_key
 import win32con
 
 
@@ -122,6 +122,7 @@ class ActionPlanner:
             health = self._find_health_for(target, detections)
             # Do a double click at the target
             logger.info(f"ActionPlanner: double-clicking target at screen ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
+            focus_window(self.hwnd)  # Ensure focused before input
             try:
                 double_click_at(screen_x, screen_y)
             except Exception as e:
@@ -141,6 +142,7 @@ class ActionPlanner:
                 screen_x = int(left + tx)
                 screen_y = int(top + ty)
                 logger.info(f"ActionPlanner: continuing attack on locked target at ({screen_x},{screen_y})")
+                focus_window(self.hwnd)  # Ensure focused before input
                 try:
                     double_click_at(screen_x, screen_y)
                 except Exception as e:
@@ -184,14 +186,16 @@ class ActionPlanner:
         # If target significantly off-center horizontally, turn (A/D)
         if ndx > turn_thr:
             logger.info("ActionPlanner: turning right (D)")
+            focus_window(self.hwnd)  # Ensure focused before input
             try:
-                tap_key(ord('D'))
+                tap_key('d')
             except Exception as e:
                 logger.error(f"ActionPlanner: tap_key D failed: {e}")
         elif ndx < -turn_thr:
             logger.info("ActionPlanner: turning left (A)")
+            focus_window(self.hwnd)  # Ensure focused before input
             try:
-                tap_key(ord('A'))
+                tap_key('a')
             except Exception as e:
                 logger.error(f"ActionPlanner: tap_key A failed: {e}")
         else:
@@ -199,13 +203,15 @@ class ActionPlanner:
             if ndy < -forward_thr:
                 # target is above center -> move forward
                 logger.info("ActionPlanner: moving forward (W)")
+                focus_window(self.hwnd)  # Ensure focused before input
                 try:
-                    tap_key(ord('W'))
+                    tap_key('w')
                 except Exception as e:
                     logger.error(f"ActionPlanner: tap_key W failed: {e}")
             elif ndy > forward_thr:
                 logger.info("ActionPlanner: moving backward (S)")
+                focus_window(self.hwnd)  # Ensure focused before input
                 try:
-                    tap_key(ord('S'))
+                    tap_key('s')
                 except Exception as e:
                     logger.error(f"ActionPlanner: tap_key S failed: {e}")

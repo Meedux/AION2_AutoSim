@@ -4,11 +4,51 @@ Uses a local YOLO weight (models/aion.pt) to run realtime detections
 and draw a click-through overlay on the selected game window.
 """
 import sys
+import ctypes
 from PySide6 import QtWidgets, QtCore
 from loguru import logger
 from utils import list_windows, get_window_rect
 from overlay import OverlayWindow
 from detection import DetectionController
+from input_controller import focus_window
+
+
+def is_admin():
+    """Check if the program is running with administrator privileges."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except:
+        return False
+
+
+def run_as_admin():
+    """Restart the program with administrator privileges."""
+    try:
+        if sys.argv[0].endswith('.py'):
+            # Running as Python script
+            ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                sys.executable, 
+                ' '.join([f'"{arg}"' for arg in sys.argv]), 
+                None, 
+                1
+            )
+        else:
+            # Running as executable
+            ctypes.windll.shell32.ShellExecuteW(
+                None, 
+                "runas", 
+                sys.executable, 
+                ' '.join([f'"{arg}"' for arg in sys.argv[1:]]), 
+                None, 
+                1
+            )
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Failed to elevate privileges: {e}")
+        return False
+    return True
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -36,17 +76,27 @@ class MainWindow(QtWidgets.QMainWindow):
         info.setWordWrap(True)
         form.addRow("Settings:", info)
 
+        # Simulate mode checkbox
+        self.simulate_cb = QtWidgets.QCheckBox("Simulate mode (log only, no real inputs)")
+        self.simulate_cb.setChecked(False)
+        self.simulate_cb.hide()  # Hide simulate mode - user wants real implementation
+        form.addRow("Mode:", self.simulate_cb)
+
         layout.addLayout(form)
 
-        # Start/Stop
+        # Start/Stop and Emergency Stop
         btns = QtWidgets.QHBoxLayout()
         self.start_btn = QtWidgets.QPushButton("Start")
         self.stop_btn = QtWidgets.QPushButton("Stop")
+        self.emergency_stop_btn = QtWidgets.QPushButton("EMERGENCY STOP")
+        self.emergency_stop_btn.setStyleSheet("QPushButton { background-color: red; color: white; font-weight: bold; }")
+        self.emergency_stop_btn.clicked.connect(self.emergency_stop)
         self.stop_btn.setEnabled(False)
         self.start_btn.clicked.connect(self.start)
         self.stop_btn.clicked.connect(self.stop)
         btns.addWidget(self.start_btn)
         btns.addWidget(self.stop_btn)
+        btns.addWidget(self.emergency_stop_btn)
         layout.addLayout(btns)
 
         # Log terminal
@@ -106,6 +156,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
         self._controller.start()
+        # Focus the game window immediately when starting
+        focus_window(hwnd)
         # start periodic overlay repositioning to follow the target window
         self._pos_timer.start()
         self.start_btn.setEnabled(False)
@@ -121,6 +173,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.log("Stopped")
+
+    def emergency_stop(self):
+        # Immediately disable automation and stop controller
+        self._automation_enabled = False
+        try:
+            self._overlay.set_automation_enabled(False)
+        except Exception:
+            pass
+        if self._controller:
+            try:
+                self._controller.action_planner.set_enabled(False)
+            except Exception:
+                pass
+        self.log("EMERGENCY STOP: Automation disabled")
 
     def _reposition_overlay(self):
         # Keep overlay aligned to the target window while running
@@ -263,11 +329,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def run_app():
+    """Main application entry point."""
     app = QtWidgets.QApplication(sys.argv)
+    
+    # AutoHotkey handles everything automatically - no driver installation needed!
+    logger.info("✓ AutoHotkey ready for input control")
+    
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    logger.info("Starting AION automation with AutoHotkey input control...")
     run_app()

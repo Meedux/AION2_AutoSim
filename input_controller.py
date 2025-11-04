@@ -1,206 +1,166 @@
-"""Low-level input controller using Win32 SendInput.
+﻿"""Input controller using AutoHotkey for game automation.
 
-Provides safe wrappers for keyboard and mouse actions used by the ActionPlanner.
+AutoHotkey provides reliable input simulation that works with most games,
+including AION. It's simpler than kernel-level drivers and doesn't require
+administrator privileges or system modifications.
+
+The ahk library automatically downloads and manages AutoHotkey if not installed.
 """
-import ctypes
 import time
-from ctypes import wintypes
+import ctypes
 import win32con
 import win32gui
+import os
+import sys
+from loguru import logger
 
-# Create a pointer type that matches platform pointer width for dwExtraInfo
-_PTR_SIZE = ctypes.sizeof(ctypes.c_void_p)
-if _PTR_SIZE == 8:
-    _UINTPTR = ctypes.c_ulonglong
-else:
-    _UINTPTR = ctypes.c_ulong
-PUL = ctypes.POINTER(_UINTPTR)
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [("wVk", wintypes.WORD),
-                ("wScan", wintypes.WORD),
-                ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", PUL)]
-
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [("dx", wintypes.LONG),
-                ("dy", wintypes.LONG),
-                ("mouseData", wintypes.DWORD),
-                ("dwFlags", wintypes.DWORD),
-                ("time", wintypes.DWORD),
-                ("dwExtraInfo", PUL)]
-
-class INPUT_I(ctypes.Union):
-    _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT)]
-
-class INPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("ii", INPUT_I)]
-
-SendInput = ctypes.windll.user32.SendInput
-
-# pointer to use for dwExtraInfo (avoids passing None)
-_DWEXTRA = ctypes.pointer(_UINTPTR(0))
-
-# Try to use pydirectinput (game-friendly) if available. If not, fall back to SendInput-based methods above.
-USE_PYD = False
+# Import AutoHotkey - automatically downloads AHK if needed
 try:
-    import pydirectinput as pdi
-    # pydirectinput has a default pause; disable it for realtime control
-    pdi.PAUSE = 0
-    pdi.FAILSAFE = False
-    USE_PYD = True
-except Exception:
-    pdi = None
-    USE_PYD = False
+    from ahk import AHK
+    
+    # Try to find AutoHotkey.exe automatically
+    ahk_paths = [
+        # Check project folder first (where we downloaded it)
+        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyU64.exe'),
+        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyU32.exe'),
+        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyA32.exe'),
+        # Check if ahk-binary installed it
+        os.path.join(sys.prefix, 'lib', 'site-packages', 'ahk_binary', 'AutoHotkey.exe'),
+        os.path.join(sys.prefix, 'Lib', 'site-packages', 'ahk_binary', 'AutoHotkey.exe'),
+        # Check common installation locations
+        r'C:\Program Files\AutoHotkey\AutoHotkey.exe',
+        r'C:\Program Files\AutoHotkey\v2\AutoHotkey.exe',
+        r'C:\Program Files (x86)\AutoHotkey\AutoHotkey.exe',
+    ]
+    
+    ahk_exe = None
+    for path in ahk_paths:
+        if os.path.exists(path):
+            ahk_exe = path
+            logger.info(f"Found AutoHotkey at: {path}")
+            break
+    
+    if ahk_exe:
+        ahk = AHK(executable_path=ahk_exe)
+    else:
+        # Try without specifying path - may work if on PATH
+        ahk = AHK()
+    
+    logger.info("✓ AutoHotkey loaded - ready for input control")
+except Exception as e:
+    logger.error(f"❌ AutoHotkey not available: {e}")
+    logger.error("Please install AutoHotkey from https://www.autohotkey.com/")
+    logger.error("Or run: pip install \"ahk[binary]\"")
+    raise ImportError(f"AutoHotkey required but not available: {e}")
+
 
 def focus_window(hwnd: int):
-    """Attempt to reliably bring the target window to foreground.
-
-    Uses a sequence of calls and AttachThreadInput as a fallback when
-    SetForegroundWindow does not succeed (Windows may restrict focus changes).
-    """
+    """Bring the target game window to foreground."""
     try:
         user32 = ctypes.windll.user32
         kernel32 = ctypes.windll.kernel32
-        # Try a simple restore + SetForegroundWindow first
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        time.sleep(0.02)
         if user32.SetForegroundWindow(hwnd):
+            time.sleep(0.15)
             return
-
-        # If simple SetForegroundWindow failed, try attaching input threads
-        # Get the thread id for the target window and the current thread
         target_tid = user32.GetWindowThreadProcessId(hwnd, 0)
         curr_tid = kernel32.GetCurrentThreadId()
         if target_tid and curr_tid and target_tid != curr_tid:
-            # attach threads, force foreground, then detach
             attached = user32.AttachThreadInput(curr_tid, target_tid, True)
             try:
                 user32.SetForegroundWindow(hwnd)
                 user32.BringWindowToTop(hwnd)
                 user32.SetFocus(hwnd)
+                time.sleep(0.15)
             finally:
-                # detach only if we attached
                 if attached:
                     user32.AttachThreadInput(curr_tid, target_tid, False)
         else:
-            # last resort
             user32.SetForegroundWindow(hwnd)
+            time.sleep(0.15)
     except Exception:
-        # best-effort; ignore errors
         pass
 
-def _send_input(inp: INPUT):
-    return SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
 
-def key_down(vk: int):
-    if USE_PYD:
-        # map ASCII letters to pydirectinput key names
-        try:
-            if 65 <= vk <= 90 or 97 <= vk <= 122:
-                k = chr(vk).lower()
-            else:
-                k = None
-        except Exception:
-            k = None
-        if k:
-            pdi.keyDown(k)
-            return 1
-    ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0, time=0, dwExtraInfo=_DWEXTRA)
-    ii = INPUT_I(); ii.ki = ki
-    inp = INPUT(type=1, ii=ii)
-    return _send_input(inp)
-
-def key_up(vk: int):
-    if USE_PYD:
-        try:
-            if 65 <= vk <= 90 or 97 <= vk <= 122:
-                k = chr(vk).lower()
-            else:
-                k = None
-        except Exception:
-            k = None
-        if k:
-            pdi.keyUp(k)
-            return 1
-    ki = KEYBDINPUT(wVk=vk, wScan=0, dwFlags=0x0002, time=0, dwExtraInfo=_DWEXTRA)  # KEYEVENTF_KEYUP
-    ii = INPUT_I(); ii.ki = ki
-    inp = INPUT(type=1, ii=ii)
-    return _send_input(inp)
-
-def tap_key(vk: int, hold: float = 0.06):
-    if USE_PYD:
-        try:
-            k = chr(vk).lower()
-            pdi.press(k)
-            return
-        except Exception:
-            pass
-    key_down(vk)
-    time.sleep(hold)
-    key_up(vk)
-
-def move_mouse_to_screen(x_px: int, y_px: int):
-    # Map to absolute coords expected by SendInput (0..65535)
-    user32 = ctypes.windll.user32
-    sx = user32.GetSystemMetrics(0)
-    sy = user32.GetSystemMetrics(1)
-    # map to 0..65535 using (width-1)/(height-1) to match MSDN guidance
-    ax = int(x_px * 65535 / max(1, sx - 1)) if sx > 1 else 0
-    ay = int(y_px * 65535 / max(1, sy - 1)) if sy > 1 else 0
-    if USE_PYD:
-        try:
-            pdi.moveTo(x_px, y_px)
-            return 1
-        except Exception:
-            pass
-    mi = MOUSEINPUT(dx=ax, dy=ay, mouseData=0, dwFlags=win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE, time=0, dwExtraInfo=_DWEXTRA)
-    ii = INPUT_I(); ii.mi = mi
-    inp = INPUT(type=0, ii=ii)
-    return _send_input(inp)
-
-def left_click():
-    if USE_PYD:
-        try:
-            pdi.click()
-            return 1
-        except Exception:
-            pass
-    mi_down = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=win32con.MOUSEEVENTF_LEFTDOWN, time=0, dwExtraInfo=_DWEXTRA)
-    ii = INPUT_I(); ii.mi = mi_down
-    inp_down = INPUT(type=0, ii=ii)
-    _send_input(inp_down)
-    time.sleep(0.01)
-    mi_up = MOUSEINPUT(dx=0, dy=0, mouseData=0, dwFlags=win32con.MOUSEEVENTF_LEFTUP, time=0, dwExtraInfo=_DWEXTRA)
-    ii2 = INPUT_I(); ii2.mi = mi_up
-    inp_up = INPUT(type=0, ii=ii2)
-    _send_input(inp_up)
-
-def double_click_at(x_px: int, y_px: int, inter: float = 0.06):
-    # move then double click
-    if USE_PYD:
-        try:
-            pdi.moveTo(x_px, y_px)
-            pdi.doubleClick()
-            return 1
-        except Exception:
-            pass
-    move_mouse_to_screen(x_px, y_px)
-    # small pause to allow the OS to move the cursor
-    time.sleep(0.03)
-    left_click()
-    time.sleep(inter)
-    left_click()
+def tap_key(key: str, presses: int = 1, interval: float = 0.05):
+    """Send key press(es) using AutoHotkey."""
+    try:
+        # AutoHotkey uses key names directly (supports special keys too)
+        # Common mappings: space, tab, esc/escape, f1-f12, 1-9, letters
+        key_name = key.lower()
+        
+        # Map common aliases to AHK key names
+        key_map = {
+            'escape': 'esc',
+            'control': 'ctrl',
+            'return': 'enter',
+        }
+        key_name = key_map.get(key_name, key_name)
+        
+        for _ in range(presses):
+            ahk.key_press(key_name)
+            if presses > 1 and interval > 0:
+                time.sleep(max(interval, 0.05))
+    except Exception as e:
+        logger.error(f"AutoHotkey key press error: {e}")
+        pass
 
 
-def click_at(x_px: int, y_px: int):
-    """Move the mouse to screen coords and perform a single left click."""
-    if USE_PYD:
-        try:
-            pdi.click(x=x_px, y=y_px)
-            return 1
-        except Exception:
-            pass
-    move_mouse_to_screen(x_px, y_px)
-    time.sleep(0.02)
-    left_click()
+def move_mouse_to(x: int, y: int, duration: float = 0.0):
+    """Move mouse to absolute screen coordinates using AutoHotkey."""
+    try:
+        # AHK mouse_move uses absolute screen coordinates
+        if duration > 0:
+            # For smooth movement, calculate steps
+            current_pos = ahk.mouse_position
+            steps = max(int(duration * 60), 1)  # 60 steps per second
+            for i in range(steps + 1):
+                t = i / steps
+                intermediate_x = int(current_pos[0] + (x - current_pos[0]) * t)
+                intermediate_y = int(current_pos[1] + (y - current_pos[1]) * t)
+                ahk.mouse_move(intermediate_x, intermediate_y, speed=0)
+                time.sleep(duration / steps)
+        else:
+            ahk.mouse_move(x, y, speed=0)
+        time.sleep(0.05)
+    except Exception as e:
+        logger.error(f"AutoHotkey mouse move error: {e}")
+        pass
+
+
+def click_at(x: int, y: int, button: str = 'left', clicks: int = 1, interval: float = 0.1):
+    """Click at specific screen coordinates using AutoHotkey."""
+    try:
+        move_mouse_to(x, y)
+        time.sleep(0.1)
+        
+        # AHK click function: button parameter is 'L', 'R', or 'M'
+        button_map = {
+            'left': 'L',
+            'right': 'R', 
+            'middle': 'M'
+        }
+        ahk_button = button_map.get(button.lower(), 'L')
+        
+        for _ in range(clicks):
+            ahk.click(x, y, button=ahk_button)
+            if clicks > 1 and interval > 0:
+                time.sleep(max(interval, 0.1))
+    except Exception as e:
+        logger.error(f"AutoHotkey click error: {e}")
+        pass
+
+
+def double_click_at(x: int, y: int):
+    """Double-click at specific screen coordinates using AutoHotkey."""
+    try:
+        move_mouse_to(x, y)
+        time.sleep(0.1)
+        
+        # AHK supports click count parameter
+        ahk.click(x, y, button='L', click_count=2)
+        time.sleep(0.05)
+    except Exception as e:
+        logger.error(f"AutoHotkey double-click error: {e}")
+        pass
