@@ -1,10 +1,15 @@
-﻿"""Input controller using AutoHotkey HARDWARE-LEVEL inputs for maximum game compatibility.
+"""Input controller using AutoHotkey HARDWARE-LEVEL inputs for maximum game compatibility.
 
 This uses AutoHotkey's hardware-level input methods which directly simulate
 physical keyboard and mouse hardware. This is the most reliable method for
 protected games like AION that block software-level inputs.
 
 The AHK script runs in the background and provides true hardware-level simulation.
+
+ADVANCED FEATURES:
+- Smooth mouse dragging with Bezier curves (no instant teleport)
+- Human-like movement patterns
+- Randomized timing
 """
 import time
 import os
@@ -15,6 +20,9 @@ import win32con
 import win32gui
 from pathlib import Path
 from loguru import logger
+import random
+import math
+import stealth_config
 
 # Try to import AHK library for hardware-level inputs
 try:
@@ -131,6 +139,91 @@ user32 = ctypes.windll.user32
 logger.info("✓ Windows SendInput API ready for input control")
 
 
+def _bezier_curve(t, p0, p1, p2, p3):
+    """Calculate point on cubic Bezier curve at time t (0-1)."""
+    return (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
+
+
+def _smooth_mouse_drag(start_x, start_y, end_x, end_y, duration=0.3, curve_intensity=0.15):
+    """
+    Drag mouse smoothly using Bezier curve (human-like movement).
+    NO INSTANT TELEPORT - moves smoothly from start to end.
+    
+    Args:
+        start_x, start_y: Starting position
+        end_x, end_y: Ending position
+        duration: Total movement time (seconds)
+        curve_intensity: How curved the path is (0-1, higher = more curve)
+    """
+    if duration <= 0:
+        # Instant move (fallback)
+        if USE_HARDWARE_AHK:
+            try:
+                ahk.mouse_move(end_x, end_y, speed=0, blocking=True)
+                return
+            except:
+                pass
+        # SendInput fallback for instant move
+        screen_width = user32.GetSystemMetrics(0)
+        screen_height = user32.GetSystemMetrics(1)
+        abs_x = int(end_x * 65535 / screen_width)
+        abs_y = int(end_y * 65535 / screen_height)
+        mi = MOUSEINPUT(abs_x, abs_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, None)
+        input_move = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi))
+        user32.SendInput(1, ctypes.byref(input_move), ctypes.sizeof(INPUT))
+        return
+    
+    # Calculate Bezier control points for smooth curved movement
+    dx = end_x - start_x
+    dy = end_y - start_y
+    
+    # Control points create the curve
+    # Add perpendicular offset for natural curve
+    perp_x = -dy * curve_intensity
+    perp_y = dx * curve_intensity
+    
+    p0_x, p0_y = start_x, start_y
+    p1_x = start_x + dx * 0.25 + perp_x * random.uniform(0.8, 1.2)
+    p1_y = start_y + dy * 0.25 + perp_y * random.uniform(0.8, 1.2)
+    p2_x = start_x + dx * 0.75 - perp_x * random.uniform(0.8, 1.2)
+    p2_y = start_y + dy * 0.75 - perp_y * random.uniform(0.8, 1.2)
+    p3_x, p3_y = end_x, end_y
+    
+    # Number of steps for smooth movement
+    steps = max(10, int(duration * 60))  # 60 FPS
+    step_delay = duration / steps
+    
+    screen_width = user32.GetSystemMetrics(0)
+    screen_height = user32.GetSystemMetrics(1)
+    
+    for i in range(steps + 1):
+        t = i / steps
+        # Cubic Bezier curve
+        x = _bezier_curve(t, p0_x, p1_x, p2_x, p3_x)
+        y = _bezier_curve(t, p0_y, p1_y, p2_y, p3_y)
+        
+        if USE_HARDWARE_AHK:
+            try:
+                ahk.mouse_move(int(x), int(y), speed=0, blocking=True)
+            except:
+                # Fallback to SendInput
+                abs_x = int(x * 65535 / screen_width)
+                abs_y = int(y * 65535 / screen_height)
+                mi = MOUSEINPUT(abs_x, abs_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, None)
+                input_move = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi))
+                user32.SendInput(1, ctypes.byref(input_move), ctypes.sizeof(INPUT))
+        else:
+            # SendInput fallback
+            abs_x = int(x * 65535 / screen_width)
+            abs_y = int(y * 65535 / screen_height)
+            mi = MOUSEINPUT(abs_x, abs_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, None)
+            input_move = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi))
+            user32.SendInput(1, ctypes.byref(input_move), ctypes.sizeof(INPUT))
+        
+        if i < steps:
+            time.sleep(step_delay)
+
+
 def focus_window(hwnd: int):
     """Bring the target game window to foreground."""
     try:
@@ -203,8 +296,35 @@ def tap_key(key: str, presses: int = 1, interval: float = 0.05):
         pass
 
 
-def move_mouse_to(x: int, y: int, duration: float = 0.0):
-    """Move mouse to absolute screen coordinates using HARDWARE-LEVEL AHK or fallback to SendInput API."""
+def move_mouse_to(x: int, y: int, duration: float = None):
+    """
+    Move mouse to absolute screen coordinates using SMOOTH DRAGGING (no teleport).
+    Uses Bezier curves for human-like movement.
+    
+    Args:
+        x, y: Target screen coordinates
+        duration: Movement duration (None = use stealth config)
+    """
+    # Get current mouse position
+    point = wintypes.POINT()
+    user32.GetCursorPos(ctypes.byref(point))
+    start_x, start_y = point.x, point.y
+    
+    # Use stealth config for duration if not specified
+    if duration is None:
+        duration = stealth_config.get_mouse_drag_duration()
+    
+    # Use smooth dragging (Bezier curve) instead of instant teleport
+    if stealth_config.MOUSE_DRAG_ENABLED:
+        _smooth_mouse_drag(
+            start_x, start_y, x, y, 
+            duration=duration,
+            curve_intensity=stealth_config.MOUSE_DRAG_CURVE
+        )
+        time.sleep(0.05)
+        return
+    
+    # Fallback: old instant movement (only if dragging disabled)
     if USE_HARDWARE_AHK:
         try:
             # Use AHK for HARDWARE-LEVEL mouse movement

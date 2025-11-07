@@ -144,8 +144,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._overlay.show()
         self._overlay.make_clickthrough()
 
-        # create controller (local model)
-        self._controller = DetectionController(hwnd=hwnd, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=6)
+        # create controller (local model) - use stealth FPS (1 FPS) for CryEngine anti-cheat evasion
+        self._controller = DetectionController(hwnd=hwnd, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=None)  # None = use stealth config
         # apply stored automation preference
         try:
             self._controller.action_planner.set_enabled(self._automation_enabled)
@@ -330,11 +330,6 @@ def run_app():
     
     # AutoHotkey handles everything automatically - no driver installation needed!
     logger.info("✓ AutoHotkey ready for input control")
-    logger.info("🕵️ Stealth mode enabled for CryEngine anti-cheat protection")
-    logger.info("   - Randomized timing and delays")
-    logger.info("   - Human-like mouse movements")
-    logger.info("   - Reduced detection frequency (3 FPS)")
-    logger.info("   - Periodic idle behavior")
     
     win = MainWindow()
     win.show()

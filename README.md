@@ -1,34 +1,22 @@
 # AION Auto-Simulator
 
-AI-powered automation for AION with **CryEngine anti-cheat protection** using hardware-level inputs.
-
-## 🛡️ Anti-Cheat Protection Features
-
-- ✅ **Hardware-level inputs** (AutoHotkey) - Not blocked by game
-- ✅ **Randomized timing** - No detectable patterns (0.15-0.45s delays)
-- ✅ **Mouse jitter** - Human-like imperfection (±3 pixels)
-- ✅ **Periodic idle** - Random pauses like a human (2-8 seconds)
-- ✅ **Reduced detection rate** - 3 FPS stealth mode
-- ✅ **No memory access** - Vision-based external detection only
-- ✅ **Administrator mode** - Auto-elevates with UAC prompt
+AI-powered automation for AION using AutoHotkey for reliable input simulation.
 
 ## ⚡ Quick Start
 
 1. **Install and Run**:
    ```bash
+   # Option 1: Use the batch file
+   run_as_admin.bat
+   
+   # Option 2: Run directly
    python main.py
-   # Will prompt for admin elevation (REQUIRED)
    ```
 
 2. **Start Automation**:
    - Select your AION game window
    - Click "Start" to begin automation
    - Press DELETE for emergency stop
-
-3. **Monitor Stealth Mode**:
-   - Check logs for "🕵️ Stealth mode enabled"
-   - Watch for randomized timing messages
-   - See `ANTI_CHEAT_PROTECTION.md` for details
 
 ## 🔧 Requirements
 
@@ -58,10 +46,8 @@ AI-powered automation for AION with **CryEngine anti-cheat protection** using ha
 
 ### Input Methods
 
-**Primary: AutoHotkey Hardware-Level** (default)
-- ✅ True hardware-level input simulation
-- ✅ Works with CryEngine anti-cheat
-- ✅ Automatic fallback to SendInput if needed
+**Primary: Windows SendInput API** (default)
+- ✅ Native Windows API for input simulation
 - ✅ Works with protected games including AION
 - ✅ Low-level input that games cannot easily block
 - ✅ No third-party dependencies or drivers needed
