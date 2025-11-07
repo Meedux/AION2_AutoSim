@@ -296,6 +296,50 @@ def tap_key(key: str, presses: int = 1, interval: float = 0.05):
         pass
 
 
+def hold_key(key: str, duration: float):
+    """Hold a key down for specified duration (for 70-degree turns, etc.)
+    
+    Args:
+        key: Key to hold (e.g., 'a', 'd', 'w')
+        duration: How long to hold the key in seconds
+    """
+    if USE_HARDWARE_AHK:
+        try:
+            # Use AHK Send command with {key down} and {key up}
+            ahk.send(f"{{{key} down}}", blocking=True)
+            time.sleep(duration)
+            ahk.send(f"{{{key} up}}", blocking=True)
+            return
+        except Exception as e:
+            logger.warning(f"AHK hold_key failed, using SendInput fallback: {e}")
+    
+    # Fallback to SendInput API
+    try:
+        key_lower = key.lower()
+        vk_code = VK_CODES.get(key_lower)
+        
+        if vk_code is None:
+            logger.warning(f"Unknown key: {key}")
+            return
+        
+        # Key down
+        ki_down = KEYBDINPUT(vk_code, 0, 0, 0, None)
+        input_down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_down))
+        user32.SendInput(1, ctypes.byref(input_down), ctypes.sizeof(INPUT))
+        
+        # Hold for duration
+        time.sleep(duration)
+        
+        # Key up
+        ki_up = KEYBDINPUT(vk_code, 0, KEYEVENTF_KEYUP, 0, None)
+        input_up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_up))
+        user32.SendInput(1, ctypes.byref(input_up), ctypes.sizeof(INPUT))
+        
+    except Exception as e:
+        logger.error(f"SendInput hold_key error: {e}")
+        pass
+
+
 def move_mouse_to(x: int, y: int, duration: float = None):
     """
     Move mouse to absolute screen coordinates using SMOOTH DRAGGING (no teleport).

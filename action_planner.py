@@ -14,7 +14,7 @@ import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
-from input_controller import focus_window, double_click_at, tap_key
+from input_controller import focus_window, double_click_at, tap_key, hold_key
 import random
 import stealth_config
 
@@ -256,17 +256,15 @@ class ActionPlanner:
                 logger.info(f"⏸ Entering idle state for {idle_duration:.1f}s (human simulation)")
                 return
         
-        # Apply stealth cooldown with randomization
-        cooldown = stealth_config.get_action_delay()
+        # SYNC FIX: Detection loop controls timing at 1 FPS
+        # Action planner executes on EVERY detection update (no extra cooldown)
+        # This keeps detection overlay and combat actions perfectly synchronized
         
         # Add extra delay for warmup actions (anti-cheat: simulate "getting oriented")
         if self._action_count < stealth_config.WARMUP_ACTIONS:
             warmup_delay = stealth_config.get_warmup_delay()
-            cooldown += warmup_delay
+            time.sleep(warmup_delay)
             logger.debug(f"Warmup action {self._action_count + 1}/{stealth_config.WARMUP_ACTIONS} (+{warmup_delay:.1f}s)")
-        
-        if now - self._last_action < cooldown:
-            return
         
         self._last_action = now
         self._action_count += 1
@@ -387,47 +385,43 @@ class ActionPlanner:
         
         # Check if we need a 70-degree turn (large offset)
         if abs(ndx) > turn_thr_70deg:
-            # Big turn (70 degrees)
+            # Big turn (70 degrees) - HOLD the key down for the full duration
             hold_duration = stealth_config.get_turn_70_degrees_duration()
             if ndx > 0:
-                logger.info(f"ActionPlanner: BIG TURN right (D) ~70° for {hold_duration:.2f}s")
+                logger.info(f"ActionPlanner: BIG TURN right (D) ~70° HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
-                    tap_key('d')
-                    time.sleep(hold_duration)
+                    hold_key('d', hold_duration)  # HOLD key for 70-degree turn
                     time.sleep(stealth_config.get_post_movement_delay())
                 except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key D failed: {e}")
+                    logger.error(f"ActionPlanner: hold_key D failed: {e}")
             else:
-                logger.info(f"ActionPlanner: BIG TURN left (A) ~70° for {hold_duration:.2f}s")
+                logger.info(f"ActionPlanner: BIG TURN left (A) ~70° HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
-                    tap_key('a')
-                    time.sleep(hold_duration)
+                    hold_key('a', hold_duration)  # HOLD key for 70-degree turn
                     time.sleep(stealth_config.get_post_movement_delay())
                 except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key A failed: {e}")
+                    logger.error(f"ActionPlanner: hold_key A failed: {e}")
         elif abs(ndx) > turn_thr_small:
-            # Small turn adjustment
+            # Small turn adjustment - also HOLD for duration
             hold_duration = stealth_config.get_key_hold_duration()
             if ndx > 0:
-                logger.info(f"ActionPlanner: turning right (D) for {hold_duration:.2f}s")
+                logger.info(f"ActionPlanner: turning right (D) HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
-                    tap_key('d')
-                    time.sleep(hold_duration)
+                    hold_key('d', hold_duration)  # HOLD key for small turn
                     time.sleep(stealth_config.get_post_movement_delay())
                 except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key D failed: {e}")
+                    logger.error(f"ActionPlanner: hold_key D failed: {e}")
             else:
-                logger.info(f"ActionPlanner: turning left (A) for {hold_duration:.2f}s")
+                logger.info(f"ActionPlanner: turning left (A) HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
-                    tap_key('a')
-                    time.sleep(hold_duration)
+                    hold_key('a', hold_duration)  # HOLD key for small turn
                     time.sleep(stealth_config.get_post_movement_delay())
                 except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key A failed: {e}")
+                    logger.error(f"ActionPlanner: hold_key A failed: {e}")
         else:
             # face roughly toward target; move forward/back depending on vertical
             if ndy < -forward_thr:
