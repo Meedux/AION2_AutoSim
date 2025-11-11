@@ -1,27 +1,40 @@
 # AION Auto-Simulator
 
-AI-powered automation for AION using AutoHotkey for reliable input simulation.
+AI-powered automation for AION with **advanced skill combo macros**, stealth attack modes, and hardware-level input simulation.
+
+## ✨ Features
+
+- 🎯 **Skill Combo Macro System** - 36 configurable keybinds with individual cooldown tracking
+- 🎲 **Stealth Attack Mode** - Randomizes between double-click, single skills, and combo sets
+- 🖱️ **Smart Clicking** - Clicks lower part of detection boxes, nearest mob targeting
+- ⌨️ **Hardware-Level Input** - AutoHotkey for maximum game compatibility
+- 🔄 **Smooth Mouse Movement** - Bezier curve dragging (no teleport)
+- 🎮 **70° Turns** - Proper key holding for wide angle turns
+- 🗺️ **Minimap Navigation** - Red dot detection and pathfinding
+- 🤖 **CryEngine Anti-Cheat Evasion** - Ultra-slow timing, startup delays, idle simulation
 
 ## ⚡ Quick Start
 
-1. **Install and Run**:
+1. **Run the program** (auto-elevates to admin):
    ```bash
-   # Option 1: Use the batch file
-   run_as_admin.bat
-   
-   # Option 2: Run directly
    python main.py
    ```
 
-2. **Start Automation**:
+2. **Configure in GUI**:
    - Select your AION game window
+   - Adjust skill combo settings in the UI
+   - Set attack mode weights (double-click/skill/combo)
    - Click "Start" to begin automation
-   - Press DELETE for emergency stop
+
+3. **Emergency Controls**:
+   - Press **DELETE** to toggle automation on/off
+   - Click **EMERGENCY STOP** button to disable immediately
 
 ## 🔧 Requirements
 
 - **Windows 10/11**
 - **Python 3.8+**
+- **Administrator privileges** (required for hardware-level input)
 - **AutoHotkey** (automatically installed via pip)
 
 ## 📦 Installation
@@ -41,163 +54,416 @@ AI-powered automation for AION using AutoHotkey for reliable input simulation.
    ```bash
    python main.py
    ```
+   *(Will automatically prompt for admin elevation)*
+
+---
+
+## 🎮 Skill Combo Macro System
+
+### Overview
+
+The skill combo system provides **36 configurable keybind slots** with intelligent cooldown tracking and randomized attack patterns.
+
+### Available Keybinds
+
+- **Number Row**: `1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`, `0`, `-`, `=`
+- **Alt + Keys**: `alt+1` through `alt+=`
+- **Ctrl + Keys**: `ctrl+1` through `ctrl+=`
+
+**Total: 36 keybind slots** ✅
+
+### Configuration
+
+Edit `skill_combo_config.py`:
+
+```python
+# 1. Set individual skill cooldowns
+SKILL_COOLDOWNS = {
+    '1': 10.0,      # Skill on key 1 = 10s cooldown
+    '2': 12.0,      # Skill on key 2 = 12s cooldown
+    'alt+1': 20.0,  # Alt+1 skill = 20s cooldown
+    'ctrl+1': 60.0, # Ctrl+1 = 60s cooldown (ultimate)
+}
+
+# 2. Create combo sets
+COMBO_SETS = [
+    {
+        'name': 'Basic DPS Rotation',
+        'skills': ['1', '2', '3', '4'],
+        'cooldown': 60.0,
+        'delay_between_skills': 0.5,
+        'enabled': True,
+    },
+]
+```
+
+### GUI Configuration
+
+The main program includes GUI controls for:
+- ✅ **Enable/Disable** stealth attack mode
+- ✅ **Attack Mode Weights** (double-click vs skills vs combos)
+- ✅ **Health Requirement** (only use skills when health bar detected)
+- ✅ **Open Config File** button for advanced settings
+
+### Stealth Attack Mode
+
+**Randomized Attack Patterns:**
+- **50%** - Standard double-click attack
+- **30%** - Single random skill press
+- **20%** - Full combo set execution
+
+**Smart Behavior:**
+- ✅ Only uses skills when `mob_combat_health` is detected
+- ✅ **Single click** + skill/combo (not double-click)
+- ✅ **Double click** for standard attacks
+- ✅ Tracks individual skill cooldowns
+- ✅ Tracks combo set cooldowns
+- ✅ Only executes when ALL skills ready
+
+### How It Works
+
+```
+Combat Detected → Choose Attack Mode (random)
+                       ↓
+    ┌──────────────────┼──────────────────┐
+    │                  │                  │
+Standard (50%)    Single Skill (30%)   Combo (20%)
+    │                  │                  │
+Double-click      Single-click +      Single-click +
+    mob           random skill         skill combo
+```
+
+**Example Execution:**
+```
+1. Bot detects mob with health bar
+2. Chooses "Single Skill" mode (30% chance)
+3. Single-clicks mob to target
+4. Presses skill '2' (hardware-level)
+5. Skill '2' goes on 12s cooldown
+6. Next attack: might be double-click (50%) or combo (20%)
+```
+
+### Testing
+
+```bash
+# Validate configuration
+python test_skill_combos.py
+```
+
+**Output:**
+```
+✓ Configuration is valid
+✓ 36 keybind slots available
+✓ Stealth attack mode: ENABLED
+✓ Attack weights: Standard=50%, Skill=30%, Combo=20%
+```
+
+---
+
+## 🎯 Combat System
+
+### Detection & Targeting
+
+- **Nearest Mob Selection**: Always attacks closest mob to player
+- **Click Position**: Lower part of detection box (70-90% down)
+- **Mouse Jitter**: ±15 pixels for human-like variation
+- **Health Bar Detection**: Continues attacking until health disappears
+
+### Attack Modes
+
+1. **Standard Attack (Double-Click)**:
+   - Double-clicks mob location
+   - Most common (50% default)
+   - No skill cooldowns
+
+2. **Single Skill Attack**:
+   - Single-clicks to target mob
+   - Presses one random skill
+   - Skill goes on individual cooldown
+
+3. **Combo Set Attack**:
+   - Single-clicks to target mob
+   - Executes full skill rotation
+   - All skills + combo go on cooldown
+
+### Movement & Navigation
+
+- **Minimap Red Dots**: Detects and navigates toward enemies
+- **70° Turns**: Holds A/D keys for full turns (not just tap)
+- **Movement Macros**: 7 randomized patterns (zigzag, circles, etc.)
+- **Smooth Mouse**: Bezier curve dragging (0.15-0.40s)
+
+---
+
+## 🛡️ CryEngine Anti-Cheat Evasion
+
+### Stealth Timing System
+
+- **Detection Rate**: 1 FPS (ultra-conservative)
+- **Startup Delay**: 8-15 seconds before any actions
+- **Warmup Period**: First 10 actions extra slow
+- **Action Cooldown**: 0.8-2.0s randomized delays
+- **Idle Simulation**: Random 4-12s pauses (35% chance)
+- **Mouse Jitter**: ±15 pixels randomization
+
+### Why These Features?
+
+AION uses CryEngine with aggressive anti-cheat. The bot:
+1. Runs at **1 FPS** to avoid detection polling
+2. Adds **startup delay** (simulates loading)
+3. Uses **randomized timing** (unpredictable behavior)
+4. Simulates **idle periods** (human "thinking")
+5. Uses **hardware input** (bypasses software blocks)
+
+---
 
 ## 🎮 How It Works
 
 ### Input Methods
 
-**Primary: Windows SendInput API** (default)
+**Primary: AutoHotkey Hardware-Level** (default)
+- ✅ True hardware simulation
+- ✅ Bypasses most anti-cheat systems
+- ✅ Supports modifier keys (Alt+, Ctrl+)
+- ✅ Reliable key holding for turns
+
+**Fallback: Windows SendInput API**
 - ✅ Native Windows API for input simulation
-- ✅ Works with protected games including AION
-- ✅ Low-level input that games cannot easily block
-- ✅ No third-party dependencies or drivers needed
-- ✅ Fast and reliable
+- ✅ Direct DirectX-compatible input
+- ✅ Used when AutoHotkey unavailable
 
-**Alternative: AutoHotkey Hardware Macro** (optional)
-- ✅ True hardware-level inputs
-- ✅ Manual control via hotkeys (F9/F10/F11)
-- ✅ Runs independently in system tray
-- ✅ Available as backup method
-- 📖 See `AHK_HARDWARE_GUIDE.md` for details
+### AI Object Detection
 
-### AI Detection
-- Custom YOLO model (`models/aion.pt`) for real-time object detection
-- Detects: mobs, map markers, UI elements
-- Overlay visualization with bounding boxes
-
-### Automation Logic
-- Smart mob targeting (prioritizes cursor → near → far)
-- Auto-navigation using map markers
-- Health-based attack loops
-- Emergency stop (DELETE key)
-
-## 🛠️ Architecture
-
-```
-AION2_AutoSim/
-├── main.py                    # Main application
-├── input_controller.py        # AutoHotkey input control
-├── detection.py               # AI detection loop
-├── action_planner.py          # Game action logic
-├── overlay.py                 # Visual overlay
-├── capture.py                 # Screen capture
-├── model_client.py            # YOLO model interface
-├── utils.py                   # Utility functions
-├── models/
-│   └── aion.pt               # AI model weights
-└── requirements.txt
-```
-
-## 🔒 Security & Safety
-
-### Windows SendInput API
-- **Official Windows API**: Part of the Windows operating system
-- **No system modifications**: Uses built-in Windows functionality
-- **No external dependencies**: Pure Python + Windows API
-- **Microsoft recommended**: Official method for input simulation
-
-## ⚙️ Configuration
-
-### Simulate Mode (Disabled by Default)
-The program now runs in **real mode** by default. Hardware inputs are sent directly to the game.
-
-### Emergency Stop
-- Press **DELETE** key at any time to stop automation
-- Works even when AION window is focused
-
-## 🐛 Troubleshooting
-
-### Inputs not working in game
-1. **Run as Administrator** (required for SendInput to work with games)
-2. Make sure AION window is focused
-3. Click in the game window first to activate it
-4. Test with: `python test_sendinput.py`
-
-### Mouse/keyboard not responding
-1. Verify inputs work: `python test_sendinput.py`
-2. Check Windows permissions
-3. Disable any input blocking software
-
-### Import errors
-```bash
-pip install -r requirements.txt
-```
-
-## 📝 Development
-
-### Testing
-```bash
-# Test AutoHotkey
-python test_ahk.py
-```
-
-### Adding New Features
-1. All input functions are in `input_controller.py`
-2. Game logic is in `action_planner.py`
-3. Detection classes are in `detection.py`
-
-## 📄 License
-
-MIT License - See LICENSE file
-
-## ⚠️ Disclaimer
-
-This software is for educational purposes only. Use at your own risk. The developers are not responsible for any consequences of using this software, including but not limited to game bans or system instability.
-
-## 🙏 Credits
-
-- **AutoHotkey**: Python ahk library (https://github.com/spyoungtech/ahk)
-- **YOLO**: Ultralytics (https://github.com/ultralytics/ultralytics)
-- **Qt Framework**: Qt Company (PySide6)
+- **YOLOv8 Model**: Real-time detection at 1 FPS
+- **Classes Detected**:
+  - `mob_target` - Enemy mobs
+  - `mob_combat_health` - Active health bars
+  - `minimap_red_dot` - Minimap indicators
+- **Custom Training**: Model trained on AION screenshots
 
 ---
 
-## #AION2_AutoSim
+## 🔧 Configuration Files
 
-Automated real-time combat macro for a 3D game using a real object detection model (YOLO/Ultralytics). This project provides:
+### `skill_combo_config.py`
 
-- A PyQt5 dark-themed UI with game window selection, start/stop controls, an embedded log terminal, and overlay debugging.
-- Real-time capture of the selected game window and inference pipeline using Ultralytics YOLO (user-provided or trained weights).
-- Automatic double-clicking at detected target locations (e.g., "Highland Sparkle").
-- Transparent overlay showing click positions and detection bounding boxes for debugging.
+**Main configuration file for skill macros:**
 
-IMPORTANT: This repository provides a real inference and automation pipeline — you must provide/train a model that recognizes the in-game mob label (e.g., "Highland Sparkle"). See the Training and Usage sections.
+```python
+# ===== STEALTH ATTACK MODE =====
+STEALTH_ATTACK_MODE_ENABLED = True  # Enable randomized attack patterns
 
-Getting started
-1. Create a Python 3.10+ virtual environment and install dependencies:
+# Attack mode weights (must sum to ~1.0)
+ATTACK_MODE_WEIGHTS = {
+    'standard_attack': 0.50,  # 50% - Double-click attack
+    'single_skill': 0.30,     # 30% - Single skill press
+    'combo_set': 0.20,        # 20% - Full combo execution
+}
 
-```powershell
-python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install -r requirements.txt
+# Only use skills when health bar detected
+REQUIRE_MOB_HEALTH_FOR_SKILLS = True
+
+# ===== SINGLE SKILL CONFIGURATION =====
+SINGLE_SKILL_POOL = ['1', '2', '3', '4']  # Skills for random selection
+SINGLE_SKILL_GLOBAL_COOLDOWN = 1.5        # GCD between single skills
+
+# ===== INDIVIDUAL SKILL COOLDOWNS =====
+SKILL_COOLDOWNS = {
+    # Number row
+    '1': 10.0,
+    '2': 12.0,
+    '3': 15.0,
+    '4': 8.0,
+    '5': 20.0,
+    # Alt combinations
+    'alt+1': 30.0,
+    'alt+2': 25.0,
+    # Ctrl combinations (ultimates)
+    'ctrl+1': 60.0,
+    'ctrl+2': 90.0,
+}
+
+# ===== COMBO SETS =====
+COMBO_SETS = [
+    {
+        'name': 'Basic DPS Rotation',
+        'skills': ['1', '2', '3', '4'],
+        'cooldown': 60.0,                  # Combo set cooldown
+        'delay_between_skills': 0.5,       # 500ms between skills
+        'enabled': True,
+    },
+    {
+        'name': 'Burst Rotation',
+        'skills': ['5', 'alt+1', 'alt+2', '1'],
+        'cooldown': 120.0,
+        'delay_between_skills': 0.3,
+        'enabled': True,
+    },
+]
 ```
 
-2. Provide a YOLO-compatible weights file (Ultralytics YOLOv8 recommended) that has a class for the mob name you want to detect (e.g. "Highland Sparkle"). Place the weights file somewhere and note the path.
+### Key Configuration Options
 
-3. Run the app:
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `STEALTH_ATTACK_MODE_ENABLED` | `True` | Enable randomized attacks |
+| `ATTACK_MODE_WEIGHTS['standard_attack']` | `0.50` | Double-click probability |
+| `ATTACK_MODE_WEIGHTS['single_skill']` | `0.30` | Single skill probability |
+| `ATTACK_MODE_WEIGHTS['combo_set']` | `0.20` | Combo set probability |
+| `REQUIRE_MOB_HEALTH_FOR_SKILLS` | `True` | Only use skills when health detected |
+| `SINGLE_SKILL_GLOBAL_COOLDOWN` | `1.5` | GCD for single skill mode |
 
-```powershell
-python main.py
+---
+
+## 📋 Usage Examples
+
+### Example 1: Pure Double-Click Bot (No Skills)
+
+```python
+# skill_combo_config.py
+STEALTH_ATTACK_MODE_ENABLED = False  # Disable stealth mode
 ```
+Result: Bot will **only** double-click mobs (no skills used)
 
-Training guidance
-- Use the Ultralytics training workflow to collect screenshots of the mob from your game in the same resolution and camera setups you will run inference in. Label with the exact class name you will configure in the UI (e.g., "Highland Sparkle").
-- Train a YOLOv8 model and export weights (best.pt) and use that path in the UI.
+---
 
-Usage notes and limitations
-- Some games use exclusive DirectX surfaces; capturing may require running the game in windowed or borderless window mode.
-- Synthetic input (pyautogui) may be blocked by some anti-cheat systems — test in a controlled environment.
-- This tool does real-time vision and input automation. Use responsibly and with permission from the game provider.
+### Example 2: Always Use Combo Sets
 
-Files
-- `main.py` — main PyQt application, UI and orchestration.
-- `detection.py` — capture + model inference loop.
-- `overlay.py` — transparent overlay window drawing debugging visuals.
-- `utils.py` — helper functions for window enumeration, coordinate mapping, and safe click implementation.
+```python
+STEALTH_ATTACK_MODE_ENABLED = True
+ATTACK_MODE_WEIGHTS = {
+    'standard_attack': 0.0,   # Never double-click
+    'single_skill': 0.0,      # Never single skill
+    'combo_set': 1.0,         # Always combo
+}
+```
+Result: Bot will **only** execute combo sets (when ready)
 
+---
 
-For Considerations:
+### Example 3: Balanced Combat (Default)
 
- - Consider using Calibration when running the program first in order for fixed points to be detected more accurately
- - A Pop Up should first appear when hitting start so that in the pop up it will inform the user to make sure that the game window is already opened and that you are already in the game and logged in to the correct character and also inform the user for UI Calibration
- - Figure out how to automatically move the Player Character using the Detected Map
- - Optimization
- - Configurable Macro Inputs
+```python
+STEALTH_ATTACK_MODE_ENABLED = True
+ATTACK_MODE_WEIGHTS = {
+    'standard_attack': 0.50,  # 50% double-click
+    'single_skill': 0.30,     # 30% single skill
+    'combo_set': 0.20,        # 20% combo
+}
+```
+Result: Randomized attacks with balanced distribution
+
+---
+
+### Example 4: High Skill Usage (Aggressive)
+
+```python
+ATTACK_MODE_WEIGHTS = {
+    'standard_attack': 0.20,  # Rarely double-click
+    'single_skill': 0.50,     # Often single skills
+    'combo_set': 0.30,        # Often combos
+}
+```
+Result: Bot uses skills 80% of the time (more aggressive)
+
+---
+
+## 🐛 Troubleshooting
+
+### Skills Not Triggering
+
+**Symptoms**: Bot only double-clicks, never uses skills
+
+**Solutions**:
+1. Check `STEALTH_ATTACK_MODE_ENABLED = True`
+2. Verify attack weights sum to ~1.0
+3. Ensure `REQUIRE_MOB_HEALTH_FOR_SKILLS = True` and health bars are detected
+4. Check individual skill cooldowns (may still be on cooldown)
+5. Run `python test_skill_combos.py` to validate config
+
+---
+
+### Skills Wrong Keys
+
+**Symptoms**: Wrong skills being pressed
+
+**Solutions**:
+1. Check `SKILL_COOLDOWNS` dictionary keys match your game bindings
+2. Verify `SINGLE_SKILL_POOL` contains correct keys
+3. Check `COMBO_SETS` skill lists
+4. Test with: `python -c "from skill_combo_manager import SkillComboManager; m = SkillComboManager(); print(m.skill_cooldowns)"`
+
+---
+
+### AutoHotkey Not Working
+
+**Symptoms**: Skills with Alt/Ctrl not pressing
+
+**Solutions**:
+1. **Run as Administrator** (required for hardware input)
+2. Check AutoHotkey installed: `pip install ahk`
+3. Fallback to SendInput: Edit `input_controller.py` and remove AutoHotkey dependency
+4. Verify game accepts modifier keys (some games block Alt+/Ctrl+)
+
+---
+
+### Combo Sets Not Executing
+
+**Symptoms**: Single skills work, but combos don't
+
+**Solutions**:
+1. Check all skills in combo are off cooldown
+2. Verify `combo_set` weight > 0.0
+3. Check combo `enabled: True` in `COMBO_SETS`
+4. Ensure `REQUIRE_MOB_HEALTH_FOR_SKILLS = True` and health detected
+
+---
+
+### "Emergency Stop" Not Responding
+
+**Symptoms**: DELETE key doesn't stop bot
+
+**Solutions**:
+1. Click **EMERGENCY STOP** button in GUI (always works)
+2. Close the program window
+3. Task Manager → End Task on `python.exe`
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Test your changes
+4. Submit a pull request
+
+---
+
+## 📄 License
+
+This project is for educational purposes only. Use at your own risk.
+
+---
+
+## 🙏 Credits
+
+- **YOLOv8**: Ultralytics object detection
+- **AutoHotkey**: Hardware-level input simulation
+- **PySide6**: Modern GUI framework
+- **PyAutoGUI**: Fallback input method
+
+---
+
+## ⚠️ Disclaimer
+
+**Use this bot at your own risk.** Game automation may violate terms of service. The developers are not responsible for account bans or other consequences.
+
+---
+
+## 📌 Future Considerations
+
+- **UI Calibration**: Popup reminder to ensure game window is open and character logged in
+- **Minimap Movement**: Automatically move player character using detected map markers
+- **Optimization**: Performance improvements for detection and input
+- **Advanced Macros**: More complex combo sequences and conditional logic

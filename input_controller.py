@@ -340,6 +340,78 @@ def hold_key(key: str, duration: float):
         pass
 
 
+def press_key_combination(modifier: str, key: str):
+    """Press a key combination (e.g., Alt+1, Ctrl+5) using hardware-level input.
+    
+    Args:
+        modifier: Modifier key ('alt' or 'ctrl')
+        key: The key to press with the modifier
+    """
+    if USE_HARDWARE_AHK:
+        try:
+            # Use AHK Send command with modifiers
+            # AHK syntax: ! = Alt, ^ = Ctrl
+            if modifier.lower() == 'alt':
+                ahk.send(f"!{key}", blocking=True)
+                logger.debug(f"AHK: Alt+{key}")
+            elif modifier.lower() == 'ctrl':
+                ahk.send(f"^{key}", blocking=True)
+                logger.debug(f"AHK: Ctrl+{key}")
+            else:
+                logger.warning(f"Unknown modifier: {modifier}")
+            return
+        except Exception as e:
+            logger.warning(f"AHK press_key_combination failed, using SendInput fallback: {e}")
+    
+    # Fallback to SendInput API
+    try:
+        modifier_lower = modifier.lower()
+        key_lower = key.lower()
+        
+        # Get virtual key codes
+        key_vk = VK_CODES.get(key_lower)
+        if key_vk is None:
+            logger.warning(f"Unknown key: {key}")
+            return
+        
+        if modifier_lower == 'alt':
+            modifier_vk = VK_CODES['alt']
+        elif modifier_lower == 'ctrl':
+            modifier_vk = VK_CODES['ctrl']
+        else:
+            logger.warning(f"Unknown modifier: {modifier}")
+            return
+        
+        # Press modifier down
+        ki_mod_down = KEYBDINPUT(modifier_vk, 0, 0, 0, None)
+        input_mod_down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_mod_down))
+        user32.SendInput(1, ctypes.byref(input_mod_down), ctypes.sizeof(INPUT))
+        time.sleep(0.02)  # Small delay
+        
+        # Press key down
+        ki_key_down = KEYBDINPUT(key_vk, 0, 0, 0, None)
+        input_key_down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_key_down))
+        user32.SendInput(1, ctypes.byref(input_key_down), ctypes.sizeof(INPUT))
+        time.sleep(0.02)  # Small delay
+        
+        # Release key up
+        ki_key_up = KEYBDINPUT(key_vk, 0, KEYEVENTF_KEYUP, 0, None)
+        input_key_up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_key_up))
+        user32.SendInput(1, ctypes.byref(input_key_up), ctypes.sizeof(INPUT))
+        time.sleep(0.02)  # Small delay
+        
+        # Release modifier up
+        ki_mod_up = KEYBDINPUT(modifier_vk, 0, KEYEVENTF_KEYUP, 0, None)
+        input_mod_up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_mod_up))
+        user32.SendInput(1, ctypes.byref(input_mod_up), ctypes.sizeof(INPUT))
+        
+        logger.debug(f"SendInput: {modifier}+{key}")
+        
+    except Exception as e:
+        logger.error(f"SendInput press_key_combination error: {e}")
+        pass
+
+
 def move_mouse_to(x: int, y: int, duration: float = None):
     """
     Move mouse to absolute screen coordinates using SMOOTH DRAGGING (no teleport).

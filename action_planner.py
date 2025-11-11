@@ -70,6 +70,15 @@ class ActionPlanner:
         self._current_movement_pattern = stealth_config.get_movement_pattern()
         self._movement_pattern_start = 0.0
         self._movement_pattern_duration = stealth_config.get_movement_pattern_duration()
+        
+        # Skill Combo Manager - handles skill macros with cooldown tracking
+        try:
+            from skill_combo_manager import SkillComboManager
+            self.skill_combo_manager = SkillComboManager(hwnd)
+            logger.info("✓ Skill Combo Manager integrated into Action Planner")
+        except Exception as e:
+            logger.warning(f"Skill Combo Manager not available: {e}")
+            self.skill_combo_manager = None
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -294,19 +303,57 @@ class ActionPlanner:
             screen_x = int(left + click_x)
             screen_y = int(top + click_y)
             
-            # focus and double click repeatedly while health present
+            # focus window
             focus_window(self.hwnd)
             # if a health bar exists for this target, lock and keep clicking until health gone
             health = self._find_health_for(target, detections)
-            # Do a double click at the target
-            logger.info(f"ActionPlanner: clicking mob at ({screen_x},{screen_y}) with jitter ({jitter_x},{jitter_y}), health={'yes' if health else 'no'}")
-            focus_window(self.hwnd)  # Ensure focused before input
-            try:
-                double_click_at(screen_x, screen_y)
-                # Add post-click delay (stealth)
-                time.sleep(stealth_config.get_post_click_delay())
-            except Exception as e:
-                logger.error(f"ActionPlanner: double_click_at failed: {e}")
+            
+            # STEALTH ATTACK MODE: Randomize between standard attack, single skill, or combo
+            attack_mode = 'standard_attack'
+            skill_executed = False
+            
+            if self.skill_combo_manager is not None:
+                try:
+                    # Choose attack mode based on stealth configuration
+                    attack_mode, skill_executed = self.skill_combo_manager.try_stealth_attack(has_health=health is not None)
+                except Exception as e:
+                    logger.error(f"Stealth attack mode error: {e}")
+                    attack_mode = 'standard_attack'
+            
+            # Execute the chosen attack mode
+            if attack_mode == 'standard_attack':
+                # Standard double-click attack
+                logger.info(f"ActionPlanner: [DOUBLE-CLICK] mob at ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
+                focus_window(self.hwnd)
+                try:
+                    from input_controller import double_click_at
+                    double_click_at(screen_x, screen_y)
+                    time.sleep(stealth_config.get_post_click_delay())
+                except Exception as e:
+                    logger.error(f"ActionPlanner: double_click_at failed: {e}")
+            
+            elif attack_mode in ('single_skill', 'combo_set'):
+                # Single click only (skill/combo will handle the attack)
+                if skill_executed:
+                    logger.info(f"ActionPlanner: [SINGLE-CLICK] mob at ({screen_x},{screen_y}) + {attack_mode}, health={'yes' if health else 'no'}")
+                    focus_window(self.hwnd)
+                    try:
+                        from input_controller import click_at
+                        click_at(screen_x, screen_y)  # Single click to target
+                        time.sleep(stealth_config.get_post_click_delay())
+                    except Exception as e:
+                        logger.error(f"ActionPlanner: click_at failed: {e}")
+                else:
+                    # Skill/combo failed, fall back to double-click
+                    logger.debug("Skill/combo failed, falling back to double-click")
+                    focus_window(self.hwnd)
+                    try:
+                        from input_controller import double_click_at
+                        double_click_at(screen_x, screen_y)
+                        time.sleep(stealth_config.get_post_click_delay())
+                    except Exception as e:
+                        logger.error(f"ActionPlanner: double_click_at failed: {e}")
+            
             # set target lock if health present
             if health:
                 self._target_locked = target
@@ -321,12 +368,45 @@ class ActionPlanner:
                 tx, ty = _center_of(self._target_locked)
                 screen_x = int(left + tx)
                 screen_y = int(top + ty)
-                logger.info(f"ActionPlanner: continuing attack on locked target at ({screen_x},{screen_y})")
-                focus_window(self.hwnd)  # Ensure focused before input
-                try:
-                    double_click_at(screen_x, screen_y)
-                except Exception as e:
-                    logger.error(f"ActionPlanner: double_click_at failed (locked): {e}")
+                # STEALTH ATTACK MODE for locked target
+                attack_mode = 'standard_attack'
+                skill_executed = False
+                
+                if self.skill_combo_manager is not None:
+                    try:
+                        attack_mode, skill_executed = self.skill_combo_manager.try_stealth_attack(has_health=health_remaining)
+                    except Exception as e:
+                        logger.error(f"Stealth attack mode error (locked): {e}")
+                        attack_mode = 'standard_attack'
+                
+                # Execute attack
+                if attack_mode == 'standard_attack':
+                    logger.info(f"ActionPlanner: [DOUBLE-CLICK] locked target at ({screen_x},{screen_y})")
+                    focus_window(self.hwnd)
+                    try:
+                        from input_controller import double_click_at
+                        double_click_at(screen_x, screen_y)
+                    except Exception as e:
+                        logger.error(f"ActionPlanner: double_click_at failed (locked): {e}")
+                
+                elif attack_mode in ('single_skill', 'combo_set'):
+                    if skill_executed:
+                        logger.info(f"ActionPlanner: [SINGLE-CLICK] locked target at ({screen_x},{screen_y}) + {attack_mode}")
+                        focus_window(self.hwnd)
+                        try:
+                            from input_controller import click_at
+                            click_at(screen_x, screen_y)
+                        except Exception as e:
+                            logger.error(f"ActionPlanner: click_at failed (locked): {e}")
+                    else:
+                        logger.debug("Skill/combo failed on locked target, using double-click")
+                        focus_window(self.hwnd)
+                        try:
+                            from input_controller import double_click_at
+                            double_click_at(screen_x, screen_y)
+                        except Exception as e:
+                            logger.error(f"ActionPlanner: double_click_at failed (locked): {e}")
+                
                 return
             else:
                 # health gone -> target dead

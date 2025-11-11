@@ -80,6 +80,58 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addLayout(form)
 
+        # Skill Combo Configuration Section
+        skill_group = QtWidgets.QGroupBox("Skill Combo Configuration")
+        skill_layout = QtWidgets.QVBoxLayout()
+        
+        # Stealth attack mode checkbox
+        self.stealth_attack_cb = QtWidgets.QCheckBox("Enable Stealth Attack Mode (randomize attacks)")
+        self.stealth_attack_cb.setChecked(True)
+        self.stealth_attack_cb.stateChanged.connect(self._update_skill_config)
+        skill_layout.addWidget(self.stealth_attack_cb)
+        
+        # Attack mode weights
+        weights_layout = QtWidgets.QFormLayout()
+        self.standard_attack_weight = QtWidgets.QDoubleSpinBox()
+        self.standard_attack_weight.setRange(0.0, 1.0)
+        self.standard_attack_weight.setSingleStep(0.05)
+        self.standard_attack_weight.setValue(0.50)
+        self.standard_attack_weight.setSuffix(" (50%)")
+        self.standard_attack_weight.valueChanged.connect(lambda v: self.standard_attack_weight.setSuffix(f" ({int(v*100)}%)"))
+        weights_layout.addRow("Double-Click Weight:", self.standard_attack_weight)
+        
+        self.single_skill_weight = QtWidgets.QDoubleSpinBox()
+        self.single_skill_weight.setRange(0.0, 1.0)
+        self.single_skill_weight.setSingleStep(0.05)
+        self.single_skill_weight.setValue(0.30)
+        self.single_skill_weight.setSuffix(" (30%)")
+        self.single_skill_weight.valueChanged.connect(lambda v: self.single_skill_weight.setSuffix(f" ({int(v*100)}%)"))
+        weights_layout.addRow("Single Skill Weight:", self.single_skill_weight)
+        
+        self.combo_set_weight = QtWidgets.QDoubleSpinBox()
+        self.combo_set_weight.setRange(0.0, 1.0)
+        self.combo_set_weight.setSingleStep(0.05)
+        self.combo_set_weight.setValue(0.20)
+        self.combo_set_weight.setSuffix(" (20%)")
+        self.combo_set_weight.valueChanged.connect(lambda v: self.combo_set_weight.setSuffix(f" ({int(v*100)}%)"))
+        weights_layout.addRow("Combo Set Weight:", self.combo_set_weight)
+        
+        skill_layout.addLayout(weights_layout)
+        
+        # Require mob health checkbox
+        self.require_health_cb = QtWidgets.QCheckBox("Only use skills when mob health bar detected")
+        self.require_health_cb.setChecked(True)
+        self.require_health_cb.stateChanged.connect(self._update_skill_config)
+        skill_layout.addWidget(self.require_health_cb)
+        
+        # Config button
+        config_btn = QtWidgets.QPushButton("Open Skill Configuration File")
+        config_btn.clicked.connect(self._open_skill_config)
+        skill_layout.addWidget(config_btn)
+        
+        skill_group.setLayout(skill_layout)
+        layout.addWidget(skill_group)
+
         # Start/Stop and Emergency Stop
         btns = QtWidgets.QHBoxLayout()
         self.start_btn = QtWidgets.QPushButton("Start")
@@ -121,6 +173,44 @@ class MainWindow(QtWidgets.QMainWindow):
     def log(self, text: str):
         # append thread-safely
         QtCore.QMetaObject.invokeMethod(self.log_view, "appendPlainText", QtCore.Qt.QueuedConnection, QtCore.Q_ARG(str, text))
+
+    def _update_skill_config(self):
+        """Update skill combo configuration based on GUI settings."""
+        try:
+            import skill_combo_config
+            
+            # Update stealth attack mode
+            skill_combo_config.STEALTH_ATTACK_MODE_ENABLED = self.stealth_attack_cb.isChecked()
+            
+            # Update attack mode weights
+            skill_combo_config.ATTACK_MODE_WEIGHTS['standard_attack'] = self.standard_attack_weight.value()
+            skill_combo_config.ATTACK_MODE_WEIGHTS['single_skill'] = self.single_skill_weight.value()
+            skill_combo_config.ATTACK_MODE_WEIGHTS['combo_set'] = self.combo_set_weight.value()
+            
+            # Update health requirement
+            skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS = self.require_health_cb.isChecked()
+            
+            self.log("✓ Skill combo configuration updated")
+        except Exception as e:
+            self.log(f"Failed to update skill config: {e}")
+    
+    def _open_skill_config(self):
+        """Open skill configuration file in default editor."""
+        try:
+            import os
+            import subprocess
+            config_path = os.path.join(os.path.dirname(__file__), 'skill_combo_config.py')
+            
+            if os.path.exists(config_path):
+                if sys.platform == 'win32':
+                    os.startfile(config_path)
+                else:
+                    subprocess.call(['open' if sys.platform == 'darwin' else 'xdg-open', config_path])
+                self.log(f"✓ Opened {config_path}")
+            else:
+                self.log(f"Config file not found: {config_path}")
+        except Exception as e:
+            self.log(f"Failed to open config file: {e}")
 
     def _refresh_windows(self):
         self.win_combo.clear()
