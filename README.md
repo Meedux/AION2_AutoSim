@@ -72,38 +72,31 @@ The skill combo system provides **36 configurable keybind slots** with intellige
 
 **Total: 36 keybind slots** ✅
 
-### Configuration
+### Configuration (100% GUI - No File Editing!)
 
-Edit `skill_combo_config.py`:
+**All configuration is done through the GUI:**
 
-```python
-# 1. Set individual skill cooldowns
-SKILL_COOLDOWNS = {
-    '1': 10.0,      # Skill on key 1 = 10s cooldown
-    '2': 12.0,      # Skill on key 2 = 12s cooldown
-    'alt+1': 20.0,  # Alt+1 skill = 20s cooldown
-    'ctrl+1': 60.0, # Ctrl+1 = 60s cooldown (ultimate)
-}
+1. **Main Window Controls:**
+   - ✅ **Enable/Disable** stealth attack mode
+   - ✅ **Attack Mode Weights** (double-click vs skills vs combos)
+   - ✅ **Health Requirement** (only use skills when health bar detected)
 
-# 2. Create combo sets
-COMBO_SETS = [
-    {
-        'name': 'Basic DPS Rotation',
-        'skills': ['1', '2', '3', '4'],
-        'cooldown': 60.0,
-        'delay_between_skills': 0.5,
-        'enabled': True,
-    },
-]
-```
+2. **⚙️ Edit Individual Skills Button:**
+   - Configure skill cooldowns for each keybind
+   - Set single skill pool for random selection
+   - Adjust GCD (Global Cooldown) for single skills
+   - Add/remove skills with visual table editor
 
-### GUI Configuration
+3. **🎯 Edit Combo Sets Button:**
+   - Create/edit/delete combo sets
+   - Set combo names, cooldowns, and delays
+   - Define skill sequences (one per line)
+   - Enable/disable specific combos
+   - Visual list management
 
-The main program includes GUI controls for:
-- ✅ **Enable/Disable** stealth attack mode
-- ✅ **Attack Mode Weights** (double-click vs skills vs combos)
-- ✅ **Health Requirement** (only use skills when health bar detected)
-- ✅ **Open Config File** button for advanced settings
+**No more editing `skill_combo_config.py` manually!**
+
+See `GUI_SKILL_EDITOR_GUIDE.md` for detailed instructions.
 
 ### Stealth Attack Mode
 
@@ -243,128 +236,127 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 
 ---
 
-## 🔧 Configuration Files
+## 🔧 GUI Configuration (No File Editing Required!)
 
-### `skill_combo_config.py`
+### Main Window Controls
 
-**Main configuration file for skill macros:**
+**Directly in the main program:**
+- **Stealth Attack Mode** - Checkbox to enable randomized attacks
+- **Attack Mode Weights** - Spinboxes for probability distribution:
+  - Double-Click Weight (default: 50%)
+  - Single Skill Weight (default: 30%)
+  - Combo Set Weight (default: 20%)
+- **Health Requirement** - Checkbox to only use skills when mob health detected
 
-```python
-# ===== STEALTH ATTACK MODE =====
-STEALTH_ATTACK_MODE_ENABLED = True  # Enable randomized attack patterns
+### ⚙️ Individual Skills Editor
 
-# Attack mode weights (must sum to ~1.0)
-ATTACK_MODE_WEIGHTS = {
-    'standard_attack': 0.50,  # 50% - Double-click attack
-    'single_skill': 0.30,     # 30% - Single skill press
-    'combo_set': 0.20,        # 20% - Full combo execution
-}
+**Click "⚙️ Edit Individual Skills" button:**
+- **Single Skill Pool** - Text field for skills used in random selection (e.g., `1, 2, 3, 4`)
+- **GCD Setting** - Global cooldown for single skill mode (default: 1.5 sec)
+- **Cooldowns Table** - Visual editor with Add/Remove buttons:
+  - Column 1: Keybind (e.g., `1`, `alt+1`, `ctrl+1`)
+  - Column 2: Cooldown in seconds (0.1-600 range)
+- **Add Skill** - Button to add new skill row
+- **Remove Skill** - Button to delete selected skill
 
-# Only use skills when health bar detected
-REQUIRE_MOB_HEALTH_FOR_SKILLS = True
+### 🎯 Combo Sets Editor
 
-# ===== SINGLE SKILL CONFIGURATION =====
-SINGLE_SKILL_POOL = ['1', '2', '3', '4']  # Skills for random selection
-SINGLE_SKILL_GLOBAL_COOLDOWN = 1.5        # GCD between single skills
+**Click "🎯 Edit Combo Sets" button:**
+- **Combo List** - Shows all combo sets with enable/disable status
+- **New Combo** - Button to create new combo set
+- **Delete Combo** - Button to remove combo set
+- **Combo Details Panel:**
+  - Combo Name (text field)
+  - Enabled checkbox
+  - Combo Cooldown (0-600 seconds)
+  - Delay Between Skills (0-5 seconds)
+  - Skills List (multi-line text, one skill per line)
+- **Save Combo** - Button to apply changes
 
-# ===== INDIVIDUAL SKILL COOLDOWNS =====
-SKILL_COOLDOWNS = {
-    # Number row
-    '1': 10.0,
-    '2': 12.0,
-    '3': 15.0,
-    '4': 8.0,
-    '5': 20.0,
-    # Alt combinations
-    'alt+1': 30.0,
-    'alt+2': 25.0,
-    # Ctrl combinations (ultimates)
-    'ctrl+1': 60.0,
-    'ctrl+2': 90.0,
-}
+### Key Settings Reference
 
-# ===== COMBO SETS =====
-COMBO_SETS = [
-    {
-        'name': 'Basic DPS Rotation',
-        'skills': ['1', '2', '3', '4'],
-        'cooldown': 60.0,                  # Combo set cooldown
-        'delay_between_skills': 0.5,       # 500ms between skills
-        'enabled': True,
-    },
-    {
-        'name': 'Burst Rotation',
-        'skills': ['5', 'alt+1', 'alt+2', '1'],
-        'cooldown': 120.0,
-        'delay_between_skills': 0.3,
-        'enabled': True,
-    },
-]
-```
-
-### Key Configuration Options
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `STEALTH_ATTACK_MODE_ENABLED` | `True` | Enable randomized attacks |
-| `ATTACK_MODE_WEIGHTS['standard_attack']` | `0.50` | Double-click probability |
-| `ATTACK_MODE_WEIGHTS['single_skill']` | `0.30` | Single skill probability |
-| `ATTACK_MODE_WEIGHTS['combo_set']` | `0.20` | Combo set probability |
-| `REQUIRE_MOB_HEALTH_FOR_SKILLS` | `True` | Only use skills when health detected |
-| `SINGLE_SKILL_GLOBAL_COOLDOWN` | `1.5` | GCD for single skill mode |
+| Setting | Location | Default | Description |
+|---------|----------|---------|-------------|
+| Stealth Mode | Main Window | Enabled | Randomize attack patterns |
+| Double-Click Weight | Main Window | 0.50 | Standard attack probability |
+| Single Skill Weight | Main Window | 0.30 | Single skill probability |
+| Combo Set Weight | Main Window | 0.20 | Combo execution probability |
+| Health Requirement | Main Window | Enabled | Only use skills with health bar |
+| Single Skill Pool | Skills Editor | `1,2,3,4` | Skills for random selection |
+| GCD | Skills Editor | 1.5 sec | Global cooldown for single skills |
+| Individual Cooldowns | Skills Editor | Various | Per-skill cooldown timers |
+| Combo Sets | Combo Editor | Various | Skill rotation sequences |
 
 ---
 
-## 📋 Usage Examples
+## 📋 Usage Examples (All GUI-Based!)
 
 ### Example 1: Pure Double-Click Bot (No Skills)
 
-```python
-# skill_combo_config.py
-STEALTH_ATTACK_MODE_ENABLED = False  # Disable stealth mode
-```
-Result: Bot will **only** double-click mobs (no skills used)
+**In Main Window:**
+- ✓ Uncheck "Enable Stealth Attack Mode"
+
+**Result:** Bot will **only** double-click mobs (no skills used)
 
 ---
 
 ### Example 2: Always Use Combo Sets
 
-```python
-STEALTH_ATTACK_MODE_ENABLED = True
-ATTACK_MODE_WEIGHTS = {
-    'standard_attack': 0.0,   # Never double-click
-    'single_skill': 0.0,      # Never single skill
-    'combo_set': 1.0,         # Always combo
-}
-```
-Result: Bot will **only** execute combo sets (when ready)
+**In Main Window:**
+- ✓ Check "Enable Stealth Attack Mode"
+- Set Double-Click Weight: **0.00** (0%)
+- Set Single Skill Weight: **0.00** (0%)
+- Set Combo Set Weight: **1.00** (100%)
+
+**Result:** Bot will **only** execute combo sets (when ready)
 
 ---
 
 ### Example 3: Balanced Combat (Default)
 
-```python
-STEALTH_ATTACK_MODE_ENABLED = True
-ATTACK_MODE_WEIGHTS = {
-    'standard_attack': 0.50,  # 50% double-click
-    'single_skill': 0.30,     # 30% single skill
-    'combo_set': 0.20,        # 20% combo
-}
-```
-Result: Randomized attacks with balanced distribution
+**In Main Window:**
+- ✓ Check "Enable Stealth Attack Mode"
+- Set Double-Click Weight: **0.50** (50%)
+- Set Single Skill Weight: **0.30** (30%)
+- Set Combo Set Weight: **0.20** (20%)
+
+**Result:** Randomized attacks with balanced distribution
 
 ---
 
 ### Example 4: High Skill Usage (Aggressive)
 
-```python
-ATTACK_MODE_WEIGHTS = {
-    'standard_attack': 0.20,  # Rarely double-click
-    'single_skill': 0.50,     # Often single skills
-    'combo_set': 0.30,        # Often combos
-}
-```
-Result: Bot uses skills 80% of the time (more aggressive)
+**In Main Window:**
+- ✓ Check "Enable Stealth Attack Mode"
+- Set Double-Click Weight: **0.20** (20%)
+- Set Single Skill Weight: **0.50** (50%)
+- Set Combo Set Weight: **0.30** (30%)
+
+**Result:** Bot uses skills 80% of the time (more aggressive)
+
+---
+
+### Example 5: Create Custom Combo
+
+**Step-by-step:**
+1. Click **"🎯 Edit Combo Sets"** button
+2. Click **"➕ New Combo"**
+3. Enter name: `My Ultimate Rotation`
+4. Check **"Enabled"**
+5. Set cooldown: `120` seconds
+6. Set delay: `0.5` seconds
+7. Enter skills (one per line):
+   ```
+   1
+   2
+   alt+1
+   ctrl+1
+   3
+   ```
+8. Click **"💾 Save Combo"**
+9. Click **"Close"**
+
+**Result:** New combo set ready to use!
 
 ---
 
