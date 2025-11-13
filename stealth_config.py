@@ -17,11 +17,11 @@ import random
 
 # Detection loop FPS (how often we check for mobs/objects)
 # MUST BE LOW - CryEngine detects high polling rates
-DETECTION_FPS = 1  # Only check once per second (very human-like)
+DETECTION_FPS = 10
 
 # Startup delay before ANY automation begins (seconds)
 # Gives CryEngine time to see "player is idle after loading"
-STARTUP_DELAY_MIN = 8.0
+STARTUP_DELAY_MIN = 0.0
 STARTUP_DELAY_MAX = 15.0
 
 # Warmup period - first N actions have EXTRA delays
@@ -36,8 +36,8 @@ WARMUP_EXTRA_DELAY_MAX = 5.0
 
 # Base cooldown between ANY actions (seconds)
 # CryEngine WILL detect if actions are too frequent
-ACTION_COOLDOWN_MIN = 0.8  # Minimum delay between actions
-ACTION_COOLDOWN_MAX = 2.0  # Maximum delay between actions
+ACTION_COOLDOWN_MIN = 0.8
+ACTION_COOLDOWN_MAX = 2.0
 
 # Additional delay after clicking a mob (seconds)
 POST_CLICK_DELAY_MIN = 0.5
@@ -46,6 +46,15 @@ POST_CLICK_DELAY_MAX = 1.2
 # Delay after pressing movement keys (seconds)
 POST_MOVEMENT_DELAY_MIN = 0.3
 POST_MOVEMENT_DELAY_MAX = 0.8
+
+# Foreground-only input safety (never send input unless game is focused)
+FOREGROUND_ONLY = True
+
+# Key tap down-time and inter-press interval randomization (seconds)
+KEY_TAP_DOWN_MIN = 0.02
+KEY_TAP_DOWN_MAX = 0.07
+KEY_TAP_INTERVAL_MIN = 0.06
+KEY_TAP_INTERVAL_MAX = 0.18
 
 # ============================================================================
 # MOUSE MOVEMENT - SMOOTH & HUMAN-LIKE
@@ -57,13 +66,42 @@ MOUSE_MOVE_DURATION_MAX = 0.5
 
 # Mouse jitter/randomization (pixels)
 # Adds random offset to click positions
-MOUSE_JITTER_X = 15  # ±15 pixels horizontal
-MOUSE_JITTER_Y = 15  # ±15 pixels vertical
+MOUSE_JITTER_X = 15
+MOUSE_JITTER_Y = 15
 
 # Target click position on mob (percentage down from top of the box)
 # Clicking in the LOWER PART of the detection box (not center, not below)
 MOB_CLICK_Y_MIN = 0.70  # 70% down from top of box (lower part)
 MOB_CLICK_Y_MAX = 0.90  # 90% down from top of box (near bottom edge)
+
+# Mouse micro-jitter before click (pixels)
+MICRO_JITTER_BEFORE_CLICK = 3  # move within ±3px then settle
+
+# Double-click interval and button hold press times (seconds)
+DOUBLE_CLICK_INTERVAL_MIN = 0.06
+DOUBLE_CLICK_INTERVAL_MAX = 0.22
+MOUSE_BUTTON_DOWN_MIN = 0.018
+MOUSE_BUTTON_DOWN_MAX = 0.055
+PRE_CLICK_PAUSE_MIN = 0.020
+PRE_CLICK_PAUSE_MAX = 0.080
+
+# When avoiding double-click detection, we can do click-then-key, etc.
+# Primary attack key used for click-then-key strategy
+PRIMARY_ATTACK_KEY = '1'
+
+# Delay between click and attack key press (seconds)
+CLICK_KEY_DELAY_MIN = 0.1
+CLICK_KEY_DELAY_MAX = 0.3
+
+# Strategy weights for attack click when "standard" attacking a mob
+# Must be >= 0; will be normalized at runtime.
+STRATEGY_WEIGHT_TWO_SINGLE = 0.0
+STRATEGY_WEIGHT_CLICK_THEN_KEY = 0.85
+STRATEGY_WEIGHT_KEY_THEN_CLICK = 0.05
+STRATEGY_WEIGHT_RIGHT_CLICK = 0.1
+
+# Hard block sequential double-click-like patterns
+AVOID_SEQUENTIAL_CLICKS = True
 
 # ============================================================================
 # IDLE SIMULATION - CRITICAL FOR STEALTH
@@ -71,10 +109,10 @@ MOB_CLICK_Y_MAX = 0.90  # 90% down from top of box (near bottom edge)
 
 # Periodic "thinking" pauses where bot does nothing
 # This simulates human decision-making
-IDLE_CHECK_INTERVAL = 30.0  # Check every 30 seconds
-IDLE_PROBABILITY = 0.35     # 35% chance to idle when checked
-IDLE_DURATION_MIN = 4.0     # Minimum idle time (seconds)
-IDLE_DURATION_MAX = 12.0    # Maximum idle time (seconds)
+IDLE_CHECK_INTERVAL = 30.0
+IDLE_PROBABILITY = 0.35
+IDLE_DURATION_MIN = 4.0
+IDLE_DURATION_MAX = 12.0
 
 # ============================================================================
 # MOVEMENT KEY HOLD DURATION
@@ -151,6 +189,11 @@ def get_mouse_jitter():
     dy = random.randint(-MOUSE_JITTER_Y, MOUSE_JITTER_Y)
     return dx, dy
 
+def get_micro_jitter():
+    """Get tiny mouse jitter for pre-click micro-movement (dx, dy in px)."""
+    j = MICRO_JITTER_BEFORE_CLICK
+    return random.randint(-j, j), random.randint(-j, j)
+
 def get_mob_click_offset(mob_height):
     """Get Y offset for clicking on mob (pixels from top of mob box)."""
     ratio = random.uniform(MOB_CLICK_Y_MIN, MOB_CLICK_Y_MAX)
@@ -169,6 +212,14 @@ def get_key_hold_duration():
     base = random.uniform(KEY_HOLD_DURATION_MIN, KEY_HOLD_DURATION_MAX)
     variation = base * KEY_HOLD_VARIATION * random.uniform(-1, 1)
     return max(0.1, base + variation)
+
+def get_key_tap_down_time():
+    """Randomized down-time for a tap key (seconds)."""
+    return random.uniform(KEY_TAP_DOWN_MIN, KEY_TAP_DOWN_MAX)
+
+def get_key_tap_interval():
+    """Randomized interval between repeated taps (seconds)."""
+    return random.uniform(KEY_TAP_INTERVAL_MIN, KEY_TAP_INTERVAL_MAX)
 
 def get_startup_delay():
     """Get random startup delay (seconds)."""
@@ -197,3 +248,44 @@ def get_movement_pattern_duration():
 def should_change_movement_pattern():
     """Check if movement pattern should change."""
     return random.random() < MOVEMENT_PATTERN_CHANGE_CHANCE
+
+def get_double_click_interval():
+    """Interval between first and second click (seconds)."""
+    return random.uniform(DOUBLE_CLICK_INTERVAL_MIN, DOUBLE_CLICK_INTERVAL_MAX)
+
+def get_mouse_button_down_time():
+    """How long to keep mouse button held down (seconds)."""
+    return random.uniform(MOUSE_BUTTON_DOWN_MIN, MOUSE_BUTTON_DOWN_MAX)
+
+def get_pre_click_pause():
+    """Short pause before a click to mimic human hesitation (seconds)."""
+    return random.uniform(PRE_CLICK_PAUSE_MIN, PRE_CLICK_PAUSE_MAX)
+
+def get_click_then_key_delay():
+    """Delay between click and primary attack key press (seconds)."""
+    return random.uniform(CLICK_KEY_DELAY_MIN, CLICK_KEY_DELAY_MAX)
+
+def choose_attack_click_strategy():
+    """Choose which strategy to use for a standard 'attack' click.
+
+    Returns one of: 'two_single', 'click_then_key', 'key_then_click', 'right_click'
+    """
+    w_two = max(0.0, STRATEGY_WEIGHT_TWO_SINGLE)
+    w_ck = max(0.0, STRATEGY_WEIGHT_CLICK_THEN_KEY)
+    w_ktc = max(0.0, STRATEGY_WEIGHT_KEY_THEN_CLICK)
+    w_right = max(0.0, STRATEGY_WEIGHT_RIGHT_CLICK)
+    total = w_two + w_ck + w_ktc + w_right
+    # fallback to sensible defaults if all zero
+    if total <= 0:
+        w_two, w_ck, w_ktc, w_right = 0.0, 0.8, 0.1, 0.1
+        total = 1.0
+    r = random.random() * total
+    if r < w_two:
+        return 'two_single'
+    r -= w_two
+    if r < w_ck:
+        return 'click_then_key'
+    r -= w_ck
+    if r < w_ktc:
+        return 'key_then_click'
+    return 'right_click'

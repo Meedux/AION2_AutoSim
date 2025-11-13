@@ -270,6 +270,43 @@ class SkillComboManager:
         
         # No combos were ready
         return False
+
+    def get_ready_combos(self) -> List[Dict]:
+        """Return a list of enabled combos that are ready now.
+
+        A combo is considered ready if:
+        - The combo's own cooldown has expired, and
+        - All of its skills are currently off cooldown.
+
+        Returns:
+            A list of combo dicts that are ready to execute.
+        """
+        if not skill_combo_config.SKILL_COMBO_ENABLED:
+            return []
+
+        combos = skill_combo_config.get_enabled_combo_sets()
+        ready: List[Dict] = []
+        for combo in combos:
+            if not self.is_combo_ready(combo):
+                continue
+            skills = combo.get('skills', [])
+            if self.are_all_skills_ready(skills):
+                ready.append(combo)
+        return ready
+
+    def try_execute_random_combo(self) -> bool:
+        """Pick a random ready combo and execute it.
+
+        Returns:
+            True if a combo was executed, False otherwise.
+        """
+        ready = self.get_ready_combos()
+        if not ready:
+            return False
+
+        combo = random.choice(ready)
+        logger.info(f"⚡ Random combo selected: {combo.get('name','unnamed')}")
+        return self.execute_combo(combo)
     
     def get_status_summary(self) -> str:
         """Get a summary of all combo and skill cooldown statuses.
@@ -309,6 +346,29 @@ class SkillComboManager:
         self._combo_cooldowns.clear()
         self._last_single_skill_use = 0.0
         logger.info("All cooldowns reset")
+
+    # ------------------------------
+    # Readiness helpers
+    # ------------------------------
+
+    def available_single_skills(self) -> List[str]:
+        """Return list of skills from pool that are currently off cooldown.
+
+        Respects SINGLE_SKILL_POOL (or all skills if empty) and per-skill cooldowns.
+        Does not consider the global single skill cooldown (GCD).
+        """
+        pool = skill_combo_config.SINGLE_SKILL_POOL or list(skill_combo_config.SKILL_COOLDOWNS.keys())
+        return [s for s in pool if self.is_skill_ready(s)]
+
+    def has_available_single_skill(self) -> bool:
+        """True if GCD is ready and at least one pool skill is off cooldown."""
+        if not self.is_single_skill_ready():
+            return False
+        return len(self.available_single_skills()) > 0
+
+    def has_ready_combo(self) -> bool:
+        """True if at least one enabled combo is fully ready now."""
+        return len(self.get_ready_combos()) > 0
     
     def choose_attack_mode(self) -> str:
         """Choose attack mode based on stealth configuration.
@@ -330,6 +390,47 @@ class SkillComboManager:
         
         chosen = random.choices(modes, weights=probabilities, k=1)[0]
         return chosen
+
+    def choose_actionable_mode(self, has_health: bool) -> str:
+        """Choose an attack mode using weights but ensure it's actionable.
+
+        If health gating is enabled and has_health is False, returns 'standard_attack'.
+        Otherwise filters choices by readiness (available skills/ready combos). If no
+        weighted choice is actionable, falls back in this order: single_skill -> combo_set -> standard_attack,
+        preferring modes that are actually executable right now.
+        """
+        if skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS and not has_health:
+            return 'standard_attack'
+
+        # Gather readiness
+        single_ready = self.has_available_single_skill()
+        combo_ready = self.has_ready_combo()
+
+        # Build weighted candidate list conditioned on readiness
+        weights = skill_combo_config.ATTACK_MODE_WEIGHTS.copy()
+        candidates: List[Tuple[str, float]] = []
+        for mode, w in weights.items():
+            if mode == 'single_skill' and not single_ready:
+                continue
+            if mode == 'combo_set' and not combo_ready:
+                continue
+            candidates.append((mode, max(0.0, float(w))))
+
+        if candidates:
+            modes, probs = zip(*candidates)
+            total = sum(probs)
+            if total <= 0:
+                modes = ('single_skill', 'combo_set', 'standard_attack')
+                probs = (1, 1, 1)
+            choice = random.choices(modes, weights=probs, k=1)[0]
+            return choice
+
+        # No weighted candidate is ready; pick best available fallback
+        if single_ready:
+            return 'single_skill'
+        if combo_ready:
+            return 'combo_set'
+        return 'standard_attack'
     
     def is_single_skill_ready(self) -> bool:
         """Check if single skill global cooldown is ready.
@@ -392,8 +493,8 @@ class SkillComboManager:
             logger.debug("No mob health detected - using standard attack only")
             return ('standard_attack', True)
         
-        # Choose attack mode
-        mode = self.choose_attack_mode()
+        # Choose attack mode (actionable)
+        mode = self.choose_actionable_mode(has_health)
         
         if mode == 'standard_attack':
             # Standard double-click attack (handled by caller)
@@ -409,7 +510,13 @@ class SkillComboManager:
         elif mode == 'combo_set':
             # Try to execute a combo
             logger.debug("Attack mode: Combo set")
-            success = self.try_execute_combos()
+            # Prefer randomized selection among ready combos
+            success = self.try_execute_random_combo()
+            if not success and self.has_available_single_skill():
+                # Fallback to single skill if combo not available anymore
+                logger.debug("Combo not available, trying single skill fallback")
+                success = self.execute_single_skill()
+                return ('single_skill', success)
             return ('combo_set', success)
         
         # Fallback to standard attack

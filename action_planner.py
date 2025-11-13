@@ -15,6 +15,7 @@ import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
 from input_controller import focus_window, double_click_at, tap_key, hold_key
+import skill_combo_config
 import random
 import stealth_config
 
@@ -308,51 +309,87 @@ class ActionPlanner:
             # if a health bar exists for this target, lock and keep clicking until health gone
             health = self._find_health_for(target, detections)
             
-            # STEALTH ATTACK MODE: Randomize between standard attack, single skill, or combo
+            # STEALTH ATTACK MODE: Decide between standard attack, single skill, or combo
             attack_mode = 'standard_attack'
-            skill_executed = False
-            
             if self.skill_combo_manager is not None:
                 try:
-                    # Choose attack mode based on stealth configuration
-                    attack_mode, skill_executed = self.skill_combo_manager.try_stealth_attack(has_health=health is not None)
+                    attack_mode = self.skill_combo_manager.choose_actionable_mode(has_health=(health is not None))
                 except Exception as e:
-                    logger.error(f"Stealth attack mode error: {e}")
+                    logger.error(f"Stealth attack mode decision error: {e}")
                     attack_mode = 'standard_attack'
-            
+
             # Execute the chosen attack mode
-            if attack_mode == 'standard_attack':
-                # Standard double-click attack
-                logger.info(f"ActionPlanner: [DOUBLE-CLICK] mob at ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
+            if attack_mode == 'standard_attack' or self.skill_combo_manager is None:
+                # Standard attack via stealth click strategy
+                logger.info(f"ActionPlanner: [ATTACK CLICK] mob at ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
                 focus_window(self.hwnd)
                 try:
-                    from input_controller import double_click_at
-                    double_click_at(screen_x, screen_y)
+                    from input_controller import perform_human_attack_click
+                    perform_human_attack_click(screen_x, screen_y)
                     time.sleep(stealth_config.get_post_click_delay())
                 except Exception as e:
-                    logger.error(f"ActionPlanner: double_click_at failed: {e}")
-            
-            elif attack_mode in ('single_skill', 'combo_set'):
-                # Single click only (skill/combo will handle the attack)
-                if skill_executed:
-                    logger.info(f"ActionPlanner: [SINGLE-CLICK] mob at ({screen_x},{screen_y}) + {attack_mode}, health={'yes' if health else 'no'}")
-                    focus_window(self.hwnd)
+                    logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
+            elif attack_mode == 'single_skill':
+                # Single click the target first, then execute one skill (respects cooldowns)
+                logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill at ({screen_x},{screen_y})")
+                focus_window(self.hwnd)
+                try:
+                    from input_controller import click_at
+                    click_at(screen_x, screen_y)
+                    time.sleep(stealth_config.get_post_click_delay())
+                except Exception as e:
+                    logger.error(f"ActionPlanner: click_at failed: {e}")
+                # Now execute a single available skill
+                success = False
+                try:
+                    success = self.skill_combo_manager.execute_single_skill()
+                except Exception as e:
+                    logger.error(f"Single skill execution error: {e}")
+                if not success and self.skill_combo_manager is not None:
+                    # Try a combo instead before falling back
+                    logger.debug("No available single skill; trying combo fallback")
                     try:
-                        from input_controller import click_at
-                        click_at(screen_x, screen_y)  # Single click to target
+                        success = self.skill_combo_manager.try_execute_random_combo()
+                    except Exception as e:
+                        logger.error(f"Combo fallback error: {e}")
+                if not success:
+                    # Final fallback to attack click
+                    try:
+                        from input_controller import perform_human_attack_click
+                        perform_human_attack_click(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
-                        logger.error(f"ActionPlanner: click_at failed: {e}")
-                else:
-                    # Skill/combo failed, fall back to double-click
-                    logger.debug("Skill/combo failed, falling back to double-click")
-                    focus_window(self.hwnd)
+                        logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
+            elif attack_mode == 'combo_set':
+                # Single click the target first, then execute a random ready combo
+                logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo at ({screen_x},{screen_y})")
+                focus_window(self.hwnd)
+                try:
+                    from input_controller import click_at
+                    click_at(screen_x, screen_y)
+                    time.sleep(stealth_config.get_post_click_delay())
+                except Exception as e:
+                    logger.error(f"ActionPlanner: click_at failed: {e}")
+                success = False
+                try:
+                    success = self.skill_combo_manager.try_execute_random_combo()
+                except Exception as e:
+                    logger.error(f"Combo execution error: {e}")
+                if not success and self.skill_combo_manager is not None:
+                    # Try single skill before fallback
+                    logger.debug("No ready combo; trying single skill fallback")
                     try:
-                        from input_controller import double_click_at
-                        double_click_at(screen_x, screen_y)
+                        success = self.skill_combo_manager.execute_single_skill()
+                    except Exception as e:
+                        logger.error(f"Single skill fallback error: {e}")
+                if not success:
+                    # Final fallback
+                    try:
+                        from input_controller import perform_human_attack_click
+                        perform_human_attack_click(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
-                        logger.error(f"ActionPlanner: double_click_at failed: {e}")
+                        logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
             
             # set target lock if health present
             if health:
@@ -368,44 +405,82 @@ class ActionPlanner:
                 tx, ty = _center_of(self._target_locked)
                 screen_x = int(left + tx)
                 screen_y = int(top + ty)
-                # STEALTH ATTACK MODE for locked target
+                # STEALTH ATTACK MODE for locked target (same decision flow)
                 attack_mode = 'standard_attack'
-                skill_executed = False
-                
                 if self.skill_combo_manager is not None:
                     try:
-                        attack_mode, skill_executed = self.skill_combo_manager.try_stealth_attack(has_health=health_remaining)
+                        attack_mode = self.skill_combo_manager.choose_actionable_mode(has_health=health_remaining)
                     except Exception as e:
-                        logger.error(f"Stealth attack mode error (locked): {e}")
+                        logger.error(f"Stealth attack mode decision error (locked): {e}")
                         attack_mode = 'standard_attack'
-                
+
                 # Execute attack
-                if attack_mode == 'standard_attack':
-                    logger.info(f"ActionPlanner: [DOUBLE-CLICK] locked target at ({screen_x},{screen_y})")
+                if attack_mode == 'standard_attack' or self.skill_combo_manager is None:
+                    logger.info(f"ActionPlanner: [ATTACK CLICK] locked target at ({screen_x},{screen_y})")
                     focus_window(self.hwnd)
                     try:
-                        from input_controller import double_click_at
-                        double_click_at(screen_x, screen_y)
+                        from input_controller import perform_human_attack_click
+                        perform_human_attack_click(screen_x, screen_y)
                     except Exception as e:
-                        logger.error(f"ActionPlanner: double_click_at failed (locked): {e}")
-                
-                elif attack_mode in ('single_skill', 'combo_set'):
-                    if skill_executed:
-                        logger.info(f"ActionPlanner: [SINGLE-CLICK] locked target at ({screen_x},{screen_y}) + {attack_mode}")
-                        focus_window(self.hwnd)
+                        logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")
+                elif attack_mode == 'single_skill':
+                    logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill on locked target at ({screen_x},{screen_y})")
+                    focus_window(self.hwnd)
+                    try:
+                        from input_controller import click_at
+                        click_at(screen_x, screen_y)
+                        time.sleep(stealth_config.get_post_click_delay())
+                    except Exception as e:
+                        logger.error(f"ActionPlanner: click_at failed (locked): {e}")
+                    success = False
+                    try:
+                        success = self.skill_combo_manager.execute_single_skill()
+                    except Exception as e:
+                        logger.error(f"Single skill execution error (locked): {e}")
+                    if not success and self.skill_combo_manager is not None:
                         try:
-                            from input_controller import click_at
-                            click_at(screen_x, screen_y)
+                            success = self.skill_combo_manager.try_execute_random_combo()
                         except Exception as e:
-                            logger.error(f"ActionPlanner: click_at failed (locked): {e}")
+                            logger.error(f"Combo fallback error (locked): {e}")
+                    if not success:
+                        try:
+                            from input_controller import perform_human_attack_click
+                            perform_human_attack_click(screen_x, screen_y)
+                        except Exception as e:
+                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
+                elif attack_mode == 'combo_set':
+                    logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo on locked target at ({screen_x},{screen_y})")
+                    focus_window(self.hwnd)
+                    try:
+                        from input_controller import click_at
+                        click_at(screen_x, screen_y)
+                        time.sleep(stealth_config.get_post_click_delay())
+                    except Exception as e:
+                        logger.error(f"ActionPlanner: click_at failed (locked): {e}")
+                    success = False
+                    try:
+                        success = self.skill_combo_manager.try_execute_random_combo()
+                    except Exception as e:
+                        logger.error(f"Combo execution error (locked): {e}")
+                    if not success and self.skill_combo_manager is not None:
+                        try:
+                            success = self.skill_combo_manager.execute_single_skill()
+                        except Exception as e:
+                            logger.error(f"Single skill fallback error (locked): {e}")
+                    if not success:
+                        try:
+                            from input_controller import perform_human_attack_click
+                            perform_human_attack_click(screen_x, screen_y)
+                        except Exception as e:
+                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
                     else:
-                        logger.debug("Skill/combo failed on locked target, using double-click")
+                        logger.debug("Skill/combo failed on locked target, using attack click strategy")
                         focus_window(self.hwnd)
                         try:
-                            from input_controller import double_click_at
-                            double_click_at(screen_x, screen_y)
+                            from input_controller import perform_human_attack_click
+                            perform_human_attack_click(screen_x, screen_y)
                         except Exception as e:
-                            logger.error(f"ActionPlanner: double_click_at failed (locked): {e}")
+                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")
                 
                 return
             else:

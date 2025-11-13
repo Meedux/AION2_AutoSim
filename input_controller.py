@@ -139,6 +139,24 @@ user32 = ctypes.windll.user32
 logger.info("✓ Windows SendInput API ready for input control")
 
 
+# Track active target window for optional foreground-only enforcement
+ACTIVE_HWND = None
+
+
+def set_active_hwnd(hwnd: int):
+    """Record the active game window hwnd for foreground checks."""
+    global ACTIVE_HWND
+    ACTIVE_HWND = hwnd
+
+
+def is_window_foreground(hwnd: int) -> bool:
+    """Return True if given hwnd is the foreground window."""
+    try:
+        return win32gui.GetForegroundWindow() == hwnd
+    except Exception:
+        return True  # fail open
+
+
 def _bezier_curve(t, p0, p1, p2, p3):
     """Calculate point on cubic Bezier curve at time t (0-1)."""
     return (1-t)**3 * p0 + 3*(1-t)**2*t * p1 + 3*(1-t)*t**2 * p2 + t**3 * p3
@@ -255,13 +273,25 @@ def focus_window(hwnd: int):
 
 def tap_key(key: str, presses: int = 1, interval: float = 0.05):
     """Send key press(es) using HARDWARE-LEVEL AHK or fallback to SendInput API."""
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("tap_key skipped (window not foreground)")
+            return
+
+    # Randomized timings
+    down_time = stealth_config.get_key_tap_down_time()
+    inter_tap = stealth_config.get_key_tap_interval() if presses > 1 else interval
     if USE_HARDWARE_AHK:
         try:
             # Use AHK for HARDWARE-LEVEL input (most reliable for protected games)
             for _ in range(presses):
-                ahk.send(key, blocking=True)
-                if presses > 1 and interval > 0:
-                    time.sleep(max(interval, 0.05))
+                # Press down and up with a slight delay
+                ahk.send(f"{{{key} down}}", blocking=True)
+                time.sleep(down_time)
+                ahk.send(f"{{{key} up}}", blocking=True)
+                if presses > 1:
+                    time.sleep(max(inter_tap, 0.05))
             return
         except Exception as e:
             logger.warning(f"AHK hardware input failed, using SendInput fallback: {e}")
@@ -286,11 +316,11 @@ def tap_key(key: str, presses: int = 1, interval: float = 0.05):
             
             # Send both events
             user32.SendInput(1, ctypes.byref(input_down), ctypes.sizeof(INPUT))
-            time.sleep(0.01)  # Small delay between down and up
+            time.sleep(down_time)
             user32.SendInput(1, ctypes.byref(input_up), ctypes.sizeof(INPUT))
             
-            if presses > 1 and interval > 0:
-                time.sleep(max(interval, 0.05))
+            if presses > 1:
+                time.sleep(max(inter_tap, 0.05))
     except Exception as e:
         logger.error(f"SendInput key press error: {e}")
         pass
@@ -303,6 +333,12 @@ def hold_key(key: str, duration: float):
         key: Key to hold (e.g., 'a', 'd', 'w')
         duration: How long to hold the key in seconds
     """
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("hold_key skipped (window not foreground)")
+            return
+
     if USE_HARDWARE_AHK:
         try:
             # Use AHK Send command with {key down} and {key up}
@@ -347,15 +383,31 @@ def press_key_combination(modifier: str, key: str):
         modifier: Modifier key ('alt' or 'ctrl')
         key: The key to press with the modifier
     """
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("press_key_combination skipped (window not foreground)")
+            return
+
+    mod_delay = stealth_config.get_key_tap_down_time()
+    inter_delay = stealth_config.get_key_tap_interval()
     if USE_HARDWARE_AHK:
         try:
             # Use AHK Send command with modifiers
             # AHK syntax: ! = Alt, ^ = Ctrl
             if modifier.lower() == 'alt':
-                ahk.send(f"!{key}", blocking=True)
+                ahk.send(f"{{Alt down}}", blocking=True)
+                time.sleep(mod_delay)
+                ahk.send(f"{key}", blocking=True)
+                time.sleep(mod_delay)
+                ahk.send(f"{{Alt up}}", blocking=True)
                 logger.debug(f"AHK: Alt+{key}")
             elif modifier.lower() == 'ctrl':
-                ahk.send(f"^{key}", blocking=True)
+                ahk.send(f"{{Ctrl down}}", blocking=True)
+                time.sleep(mod_delay)
+                ahk.send(f"{key}", blocking=True)
+                time.sleep(mod_delay)
+                ahk.send(f"{{Ctrl up}}", blocking=True)
                 logger.debug(f"AHK: Ctrl+{key}")
             else:
                 logger.warning(f"Unknown modifier: {modifier}")
@@ -386,19 +438,19 @@ def press_key_combination(modifier: str, key: str):
         ki_mod_down = KEYBDINPUT(modifier_vk, 0, 0, 0, None)
         input_mod_down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_mod_down))
         user32.SendInput(1, ctypes.byref(input_mod_down), ctypes.sizeof(INPUT))
-        time.sleep(0.02)  # Small delay
+        time.sleep(mod_delay)
         
         # Press key down
         ki_key_down = KEYBDINPUT(key_vk, 0, 0, 0, None)
         input_key_down = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_key_down))
         user32.SendInput(1, ctypes.byref(input_key_down), ctypes.sizeof(INPUT))
-        time.sleep(0.02)  # Small delay
+        time.sleep(mod_delay)
         
         # Release key up
         ki_key_up = KEYBDINPUT(key_vk, 0, KEYEVENTF_KEYUP, 0, None)
         input_key_up = INPUT(INPUT_KEYBOARD, INPUT_UNION(ki=ki_key_up))
         user32.SendInput(1, ctypes.byref(input_key_up), ctypes.sizeof(INPUT))
-        time.sleep(0.02)  # Small delay
+        time.sleep(mod_delay)
         
         # Release modifier up
         ki_mod_up = KEYBDINPUT(modifier_vk, 0, KEYEVENTF_KEYUP, 0, None)
@@ -491,24 +543,40 @@ def move_mouse_to(x: int, y: int, duration: float = None):
 
 def click_at(x: int, y: int, button: str = 'left', clicks: int = 1, interval: float = 0.1):
     """Click at specific screen coordinates using HARDWARE-LEVEL AHK or fallback to SendInput API."""
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("click_at skipped (window not foreground)")
+            return
+
+    # Micro jitter before click, then settle
+    jx, jy = stealth_config.get_micro_jitter()
+    settle_pause = stealth_config.get_pre_click_pause()
     if USE_HARDWARE_AHK:
         try:
             # Use AHK for HARDWARE-LEVEL mouse clicks
+            move_mouse_to(x + jx, y + jy)
+            time.sleep(settle_pause)
             move_mouse_to(x, y)
-            time.sleep(0.1)
+            time.sleep(settle_pause)
             
-            for _ in range(clicks):
+            down_time = stealth_config.get_mouse_button_down_time()
+            inter_click = interval if interval is not None else stealth_config.get_double_click_interval()
+            for i in range(clicks):
                 ahk.click(x, y, button=button, blocking=True)
-                if clicks > 1 and interval > 0:
-                    time.sleep(max(interval, 0.1))
+                time.sleep(down_time)
+                if clicks > 1 and i < clicks - 1:
+                    time.sleep(max(inter_click, 0.06))
             return
         except Exception as e:
             logger.warning(f"AHK hardware click failed, using SendInput fallback: {e}")
     
     # Fallback to SendInput API
     try:
+        move_mouse_to(x + jx, y + jy)
+        time.sleep(settle_pause)
         move_mouse_to(x, y)
-        time.sleep(0.1)
+        time.sleep(settle_pause)
         
         # Button flags
         button_map = {
@@ -518,22 +586,23 @@ def click_at(x: int, y: int, button: str = 'left', clicks: int = 1, interval: fl
         }
         
         down_flag, up_flag = button_map.get(button.lower(), button_map['left'])
-        
-        for _ in range(clicks):
+        down_time = stealth_config.get_mouse_button_down_time()
+        inter_click = interval if interval is not None else stealth_config.get_double_click_interval()
+        for i in range(clicks):
             # Mouse down
             mi_down = MOUSEINPUT(0, 0, 0, down_flag, 0, None)
             input_down = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi_down))
             user32.SendInput(1, ctypes.byref(input_down), ctypes.sizeof(INPUT))
             
-            time.sleep(0.05)
+            time.sleep(down_time)
             
             # Mouse up
             mi_up = MOUSEINPUT(0, 0, 0, up_flag, 0, None)
             input_up = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi_up))
             user32.SendInput(1, ctypes.byref(input_up), ctypes.sizeof(INPUT))
             
-            if clicks > 1 and interval > 0:
-                time.sleep(max(interval, 0.1))
+            if clicks > 1 and i < clicks - 1:
+                time.sleep(max(inter_click, 0.06))
     except Exception as e:
         logger.error(f"SendInput click error: {e}")
         pass
@@ -541,39 +610,116 @@ def click_at(x: int, y: int, button: str = 'left', clicks: int = 1, interval: fl
 
 def double_click_at(x: int, y: int):
     """Double-click at specific screen coordinates using HARDWARE-LEVEL AHK or fallback to SendInput API."""
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("double_click_at skipped (window not foreground)")
+            return
+
+    inter = stealth_config.get_double_click_interval()
+    down_time = stealth_config.get_mouse_button_down_time()
+    settle_pause = stealth_config.get_pre_click_pause()
+    jx, jy = stealth_config.get_micro_jitter()
     if USE_HARDWARE_AHK:
         try:
             # Use AHK for HARDWARE-LEVEL double-click
+            move_mouse_to(x + jx, y + jy)
+            time.sleep(settle_pause)
             move_mouse_to(x, y)
-            time.sleep(0.1)
-            ahk.click(x, y, click_count=2, blocking=True)
+            time.sleep(settle_pause)
+            ahk.click(x, y, blocking=True)
+            time.sleep(down_time)
+            time.sleep(inter)
+            ahk.click(x, y, blocking=True)
             return
         except Exception as e:
             logger.warning(f"AHK hardware double-click failed, using SendInput fallback: {e}")
     
     # Fallback to SendInput API
     try:
+        move_mouse_to(x + jx, y + jy)
+        time.sleep(settle_pause)
         move_mouse_to(x, y)
-        time.sleep(0.1)
+        time.sleep(settle_pause)
         
         # Two rapid clicks
-        for _ in range(2):
+        for i in range(2):
             # Mouse down
             mi_down = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTDOWN, 0, None)
             input_down = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi_down))
             user32.SendInput(1, ctypes.byref(input_down), ctypes.sizeof(INPUT))
             
-            time.sleep(0.01)
+            time.sleep(down_time)
             
             # Mouse up
             mi_up = MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
             input_up = INPUT(INPUT_MOUSE, INPUT_UNION(mi=mi_up))
             user32.SendInput(1, ctypes.byref(input_up), ctypes.sizeof(INPUT))
             
-            if _ == 0:  # Delay between first and second click
-                time.sleep(0.08)
+            if i == 0:  # Delay between first and second click
+                time.sleep(inter)
         
         time.sleep(0.05)
     except Exception as e:
         logger.error(f"SendInput double-click error: {e}")
         pass
+
+
+def perform_human_attack_click(x: int, y: int):
+    """Execute an attack on a target using a stealth strategy to avoid double-click detection.
+
+        Strategies:
+            - 'two_single': two separate left-clicks with humanized interval
+            - 'click_then_key': single left-click to target, then press PRIMARY_ATTACK_KEY
+            - 'key_then_click': press key first, then a single left-click
+            - 'right_click': single right-click
+    """
+    # Foreground-only guard
+    if stealth_config.FOREGROUND_ONLY and ACTIVE_HWND is not None:
+        if not is_window_foreground(ACTIVE_HWND):
+            logger.debug("perform_human_attack_click skipped (window not foreground)")
+            return
+
+    try:
+        strat = stealth_config.choose_attack_click_strategy()
+    except Exception:
+        strat = 'two_single'
+
+    if strat == 'two_single':
+        if getattr(stealth_config, 'AVOID_SEQUENTIAL_CLICKS', False):
+            strat = 'click_then_key'
+        else:
+            # Two single left clicks with natural interval
+            click_at(x, y, button='left', clicks=2, interval=None)
+            return
+
+    if strat == 'key_then_click':
+        key = getattr(stealth_config, 'PRIMARY_ATTACK_KEY', None)
+        if key:
+            tap_key(key)
+            try:
+                delay = stealth_config.get_click_then_key_delay()
+            except Exception:
+                delay = 0.15
+            time.sleep(delay)
+        click_at(x, y, button='left', clicks=1)
+        return
+
+    if strat == 'right_click':
+        click_at(x, y, button='right', clicks=1)
+        return
+
+    # click_then_key (default)
+    click_at(x, y, button='left', clicks=1)
+    # Pause a bit before pressing primary attack key
+    try:
+        delay = stealth_config.get_click_then_key_delay()
+    except Exception:
+        delay = 0.15
+    time.sleep(delay)
+    key = getattr(stealth_config, 'PRIMARY_ATTACK_KEY', None)
+    if key:
+        tap_key(key)
+    else:
+        # If no key configured, fall back to a second click with humanized gap
+        click_at(x, y, button='left', clicks=1)

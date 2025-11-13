@@ -142,7 +142,7 @@ ATTACK_MODE_WEIGHTS = {
 }
 
 # Only trigger skills when mob has health bar (mob_combat_health detected)
-REQUIRE_MOB_HEALTH_FOR_SKILLS = True
+REQUIRE_MOB_HEALTH_FOR_SKILLS = False
 
 # When using single skill mode, pick from this pool (empty = use all skills)
 SINGLE_SKILL_POOL = ['1', '2', '3', '4', '5']  # Only use these skills for single-skill attacks

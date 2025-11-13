@@ -11,7 +11,7 @@ from loguru import logger
 from utils import list_windows, get_window_rect
 from overlay import OverlayWindow
 from detection import DetectionController
-from input_controller import focus_window
+from input_controller import focus_window, set_active_hwnd
 
 
 def is_admin():
@@ -149,6 +149,15 @@ class MainWindow(QtWidgets.QMainWindow):
         
         skill_group.setLayout(skill_layout)
         layout.addWidget(skill_group)
+
+        # Anti-Detection settings
+        anti_layout = QtWidgets.QHBoxLayout()
+        anti_btn = QtWidgets.QPushButton("🛡 Anti-Detection Settings")
+        anti_btn.setStyleSheet("QPushButton { background-color: #9C27B0; color: white; font-weight: bold; padding: 8px; }")
+        anti_btn.clicked.connect(self._open_anti_detection)
+        anti_layout.addWidget(anti_btn)
+        anti_layout.addStretch()
+        layout.addLayout(anti_layout)
 
         # Start/Stop and Emergency Stop
         btns = QtWidgets.QHBoxLayout()
@@ -291,6 +300,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log("No window selected")
             return
         hwnd = self.win_combo.currentData()
+        try:
+            set_active_hwnd(hwnd)
+        except Exception:
+            pass
         rect = get_window_rect(hwnd)
         if not rect:
             self.log("Unable to get window rect")
@@ -484,6 +497,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if dialog.exec():
             self.log("✓ Combo sets updated")
             self._update_skill_config()
+
+    def _open_anti_detection(self):
+        """Open Anti-Detection settings dialog."""
+        dialog = AntiDetectionDialog(self)
+        if dialog.exec():
+            self.log("✓ Anti-Detection settings saved")
 
     def closeEvent(self, event):
         # ensure controller stopped and leave
@@ -1112,6 +1131,207 @@ class ComboEditorDialog(QtWidgets.QDialog):
                 "Save Warning",
                 f"Combo updated in memory but failed to save to file:\n{e}\n\nChanges will be lost on restart."
             )
+
+
+class AntiDetectionDialog(QtWidgets.QDialog):
+    """Dialog to edit key stealth/anti-detection parameters from stealth_config.py."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Anti-Detection Settings")
+        self.setMinimumSize(600, 600)
+
+        import stealth_config as sc
+        self.sc = sc
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "Tune human-like timings and safety checks. Keep values conservative for protected games."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("background-color: #424242; padding: 10px; border-radius: 5px;")
+        layout.addWidget(info)
+
+        form = QtWidgets.QFormLayout()
+
+        # Detection FPS
+        self.det_fps = QtWidgets.QSpinBox()
+        self.det_fps.setRange(1, 10)
+        self.det_fps.setValue(getattr(sc, 'DETECTION_FPS', 1))
+        form.addRow("Detection FPS:", self.det_fps)
+
+        # Startup delay range
+        self.start_min = QtWidgets.QDoubleSpinBox(); self.start_min.setRange(0.0, 60.0); self.start_min.setDecimals(2)
+        self.start_max = QtWidgets.QDoubleSpinBox(); self.start_max.setRange(0.0, 60.0); self.start_max.setDecimals(2)
+        self.start_min.setValue(getattr(sc, 'STARTUP_DELAY_MIN', 8.0))
+        self.start_max.setValue(getattr(sc, 'STARTUP_DELAY_MAX', 15.0))
+        h1 = QtWidgets.QHBoxLayout(); h1.addWidget(self.start_min); h1.addWidget(QtWidgets.QLabel("min  ..  max")); h1.addWidget(self.start_max)
+        w1 = QtWidgets.QWidget(); w1.setLayout(h1)
+        form.addRow("Startup Delay (s):", w1)
+
+        # Warmup actions
+        self.warmup_actions = QtWidgets.QSpinBox(); self.warmup_actions.setRange(0, 100)
+        self.warmup_actions.setValue(getattr(sc, 'WARMUP_ACTIONS', 10))
+        form.addRow("Warmup Actions:", self.warmup_actions)
+
+        # Action cooldown range
+        self.act_min = QtWidgets.QDoubleSpinBox(); self.act_min.setRange(0.0, 10.0); self.act_min.setDecimals(2)
+        self.act_max = QtWidgets.QDoubleSpinBox(); self.act_max.setRange(0.0, 10.0); self.act_max.setDecimals(2)
+        self.act_min.setValue(getattr(sc, 'ACTION_COOLDOWN_MIN', 0.8))
+        self.act_max.setValue(getattr(sc, 'ACTION_COOLDOWN_MAX', 2.0))
+        h2 = QtWidgets.QHBoxLayout(); h2.addWidget(self.act_min); h2.addWidget(QtWidgets.QLabel("min  ..  max")); h2.addWidget(self.act_max)
+        w2 = QtWidgets.QWidget(); w2.setLayout(h2)
+        form.addRow("Action Cooldown (s):", w2)
+
+        # Idle
+        self.idle_check = QtWidgets.QDoubleSpinBox(); self.idle_check.setRange(5.0, 300.0); self.idle_check.setDecimals(1)
+        self.idle_check.setValue(getattr(sc, 'IDLE_CHECK_INTERVAL', 30.0))
+        form.addRow("Idle Check Interval (s):", self.idle_check)
+
+        self.idle_prob = QtWidgets.QDoubleSpinBox(); self.idle_prob.setRange(0.0, 1.0); self.idle_prob.setSingleStep(0.05)
+        self.idle_prob.setValue(getattr(sc, 'IDLE_PROBABILITY', 0.35))
+        form.addRow("Idle Probability:", self.idle_prob)
+
+        self.idle_min = QtWidgets.QDoubleSpinBox(); self.idle_min.setRange(0.0, 60.0); self.idle_min.setDecimals(1)
+        self.idle_max = QtWidgets.QDoubleSpinBox(); self.idle_max.setRange(0.0, 60.0); self.idle_max.setDecimals(1)
+        self.idle_min.setValue(getattr(sc, 'IDLE_DURATION_MIN', 4.0))
+        self.idle_max.setValue(getattr(sc, 'IDLE_DURATION_MAX', 12.0))
+        h3 = QtWidgets.QHBoxLayout(); h3.addWidget(self.idle_min); h3.addWidget(QtWidgets.QLabel("min  ..  max")); h3.addWidget(self.idle_max)
+        w3 = QtWidgets.QWidget(); w3.setLayout(h3)
+        form.addRow("Idle Duration (s):", w3)
+
+        # Foreground-only
+        self.foreground_cb = QtWidgets.QCheckBox("Only send input when game window is foreground")
+        self.foreground_cb.setChecked(getattr(sc, 'FOREGROUND_ONLY', True))
+        form.addRow("Safety:", self.foreground_cb)
+
+    # Double click interval
+        self.dbl_min = QtWidgets.QDoubleSpinBox(); self.dbl_min.setRange(0.02, 0.5); self.dbl_min.setDecimals(3)
+        self.dbl_max = QtWidgets.QDoubleSpinBox(); self.dbl_max.setRange(0.02, 0.5); self.dbl_max.setDecimals(3)
+        self.dbl_min.setValue(getattr(sc, 'DOUBLE_CLICK_INTERVAL_MIN', 0.06))
+        self.dbl_max.setValue(getattr(sc, 'DOUBLE_CLICK_INTERVAL_MAX', 0.22))
+        h4 = QtWidgets.QHBoxLayout(); h4.addWidget(self.dbl_min); h4.addWidget(QtWidgets.QLabel("min  ..  max")); h4.addWidget(self.dbl_max)
+        w4 = QtWidgets.QWidget(); w4.setLayout(h4)
+        form.addRow("Double-Click Interval (s):", w4)
+
+        # Key tap down time
+        self.key_down_min = QtWidgets.QDoubleSpinBox(); self.key_down_min.setRange(0.010, 0.3); self.key_down_min.setDecimals(3)
+        self.key_down_max = QtWidgets.QDoubleSpinBox(); self.key_down_max.setRange(0.010, 0.3); self.key_down_max.setDecimals(3)
+        self.key_down_min.setValue(getattr(sc, 'KEY_TAP_DOWN_MIN', 0.025))
+        self.key_down_max.setValue(getattr(sc, 'KEY_TAP_DOWN_MAX', 0.070))
+        h5 = QtWidgets.QHBoxLayout(); h5.addWidget(self.key_down_min); h5.addWidget(QtWidgets.QLabel("min  ..  max")); h5.addWidget(self.key_down_max)
+        w5 = QtWidgets.QWidget(); w5.setLayout(h5)
+        form.addRow("Key Tap Down-Time (s):", w5)
+
+        # Mouse jitter
+        self.jitter_x = QtWidgets.QSpinBox(); self.jitter_x.setRange(0, 50)
+        self.jitter_y = QtWidgets.QSpinBox(); self.jitter_y.setRange(0, 50)
+        self.jitter_x.setValue(getattr(sc, 'MOUSE_JITTER_X', 15))
+        self.jitter_y.setValue(getattr(sc, 'MOUSE_JITTER_Y', 15))
+        h6 = QtWidgets.QHBoxLayout(); h6.addWidget(self.jitter_x); h6.addWidget(QtWidgets.QLabel("x  ..  y")); h6.addWidget(self.jitter_y)
+        w6 = QtWidgets.QWidget(); w6.setLayout(h6)
+        form.addRow("Mouse Jitter (px):", w6)
+
+        # Primary attack key and click->key delay
+        self.primary_key = QtWidgets.QLineEdit()
+        self.primary_key.setText(getattr(sc, 'PRIMARY_ATTACK_KEY', '1'))
+        form.addRow("Primary Attack Key:", self.primary_key)
+
+        self.ck_min = QtWidgets.QDoubleSpinBox(); self.ck_min.setRange(0.01, 1.0); self.ck_min.setDecimals(3)
+        self.ck_max = QtWidgets.QDoubleSpinBox(); self.ck_max.setRange(0.01, 1.0); self.ck_max.setDecimals(3)
+        self.ck_min.setValue(getattr(sc, 'CLICK_KEY_DELAY_MIN', 0.10))
+        self.ck_max.setValue(getattr(sc, 'CLICK_KEY_DELAY_MAX', 0.30))
+        h7 = QtWidgets.QHBoxLayout(); h7.addWidget(self.ck_min); h7.addWidget(QtWidgets.QLabel("min  ..  max")); h7.addWidget(self.ck_max)
+        w7 = QtWidgets.QWidget(); w7.setLayout(h7)
+        form.addRow("Click → Key Delay (s):", w7)
+
+        # Strategy weights
+        self.w_two = QtWidgets.QDoubleSpinBox(); self.w_two.setRange(0.0, 1.0); self.w_two.setSingleStep(0.05)
+        self.w_ck = QtWidgets.QDoubleSpinBox(); self.w_ck.setRange(0.0, 1.0); self.w_ck.setSingleStep(0.05)
+        self.w_ktc = QtWidgets.QDoubleSpinBox(); self.w_ktc.setRange(0.0, 1.0); self.w_ktc.setSingleStep(0.05)
+        self.w_right = QtWidgets.QDoubleSpinBox(); self.w_right.setRange(0.0, 1.0); self.w_right.setSingleStep(0.05)
+        self.w_two.setValue(getattr(sc, 'STRATEGY_WEIGHT_TWO_SINGLE', 0.0))
+        self.w_ck.setValue(getattr(sc, 'STRATEGY_WEIGHT_CLICK_THEN_KEY', 0.85))
+        self.w_ktc.setValue(getattr(sc, 'STRATEGY_WEIGHT_KEY_THEN_CLICK', 0.05))
+        self.w_right.setValue(getattr(sc, 'STRATEGY_WEIGHT_RIGHT_CLICK', 0.1))
+        w_h = QtWidgets.QHBoxLayout(); w_h.addWidget(QtWidgets.QLabel("two-clicks:")); w_h.addWidget(self.w_two); w_h.addSpacing(12)
+        w_h.addWidget(QtWidgets.QLabel("click→key:")); w_h.addWidget(self.w_ck); w_h.addSpacing(12)
+        w_h.addWidget(QtWidgets.QLabel("key→click:")); w_h.addWidget(self.w_ktc); w_h.addSpacing(12)
+        w_h.addWidget(QtWidgets.QLabel("right-click:")); w_h.addWidget(self.w_right)
+        w8 = QtWidgets.QWidget(); w8.setLayout(w_h)
+        form.addRow("Attack Strategy Weights:", w8)
+
+        # Avoid sequential clicks
+        self.avoid_seq = QtWidgets.QCheckBox("Avoid sequential two-click patterns")
+        self.avoid_seq.setChecked(getattr(sc, 'AVOID_SEQUENTIAL_CLICKS', True))
+        form.addRow("Click Safety:", self.avoid_seq)
+
+        layout.addLayout(form)
+
+        # Buttons
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Save | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self._save_and_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _save_and_accept(self):
+        """Persist edited values back to stealth_config.py."""
+        try:
+            import os
+            config_path = os.path.join(os.path.dirname(__file__), 'stealth_config.py')
+            # Read file
+            with open(config_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            def replace_scalar(name: str, value_str: str, lines_in: list) -> list:
+                out = []
+                replaced = False
+                for ln in lines_in:
+                    if ln.strip().startswith(name + " = ") and not ln.strip().startswith('#'):
+                        out.append(f"{name} = {value_str}\n")
+                        replaced = True
+                    else:
+                        out.append(ln)
+                return out
+
+            # Apply replacements
+            new_lines = lines
+            new_lines = replace_scalar('DETECTION_FPS', str(int(self.det_fps.value())), new_lines)
+            new_lines = replace_scalar('STARTUP_DELAY_MIN', str(float(self.start_min.value())), new_lines)
+            new_lines = replace_scalar('STARTUP_DELAY_MAX', str(float(self.start_max.value())), new_lines)
+            new_lines = replace_scalar('WARMUP_ACTIONS', str(int(self.warmup_actions.value())), new_lines)
+            new_lines = replace_scalar('ACTION_COOLDOWN_MIN', str(float(self.act_min.value())), new_lines)
+            new_lines = replace_scalar('ACTION_COOLDOWN_MAX', str(float(self.act_max.value())), new_lines)
+            new_lines = replace_scalar('IDLE_CHECK_INTERVAL', str(float(self.idle_check.value())), new_lines)
+            new_lines = replace_scalar('IDLE_PROBABILITY', str(float(self.idle_prob.value())), new_lines)
+            new_lines = replace_scalar('IDLE_DURATION_MIN', str(float(self.idle_min.value())), new_lines)
+            new_lines = replace_scalar('IDLE_DURATION_MAX', str(float(self.idle_max.value())), new_lines)
+            new_lines = replace_scalar('FOREGROUND_ONLY', 'True' if self.foreground_cb.isChecked() else 'False', new_lines)
+            new_lines = replace_scalar('DOUBLE_CLICK_INTERVAL_MIN', str(float(self.dbl_min.value())), new_lines)
+            new_lines = replace_scalar('DOUBLE_CLICK_INTERVAL_MAX', str(float(self.dbl_max.value())), new_lines)
+            new_lines = replace_scalar('KEY_TAP_DOWN_MIN', str(float(self.key_down_min.value())), new_lines)
+            new_lines = replace_scalar('KEY_TAP_DOWN_MAX', str(float(self.key_down_max.value())), new_lines)
+            new_lines = replace_scalar('MOUSE_JITTER_X', str(int(self.jitter_x.value())), new_lines)
+            new_lines = replace_scalar('MOUSE_JITTER_Y', str(int(self.jitter_y.value())), new_lines)
+            new_lines = replace_scalar('PRIMARY_ATTACK_KEY', repr(self.primary_key.text().strip() or '1'), new_lines)
+            new_lines = replace_scalar('CLICK_KEY_DELAY_MIN', str(float(self.ck_min.value())), new_lines)
+            new_lines = replace_scalar('CLICK_KEY_DELAY_MAX', str(float(self.ck_max.value())), new_lines)
+            new_lines = replace_scalar('STRATEGY_WEIGHT_TWO_SINGLE', str(float(self.w_two.value())), new_lines)
+            new_lines = replace_scalar('STRATEGY_WEIGHT_CLICK_THEN_KEY', str(float(self.w_ck.value())), new_lines)
+            new_lines = replace_scalar('STRATEGY_WEIGHT_KEY_THEN_CLICK', str(float(self.w_ktc.value())), new_lines)
+            new_lines = replace_scalar('STRATEGY_WEIGHT_RIGHT_CLICK', str(float(self.w_right.value())), new_lines)
+            new_lines = replace_scalar('AVOID_SEQUENTIAL_CLICKS', 'True' if self.avoid_seq.isChecked() else 'False', new_lines)
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+
+        except Exception as e:
+            from loguru import logger
+            logger.error(f"Failed to save Anti-Detection settings: {e}")
+            QtWidgets.QMessageBox.warning(self, "Save Warning", f"Failed to persist settings to stealth_config.py:\n{e}")
+        self.accept()
 
 
 def run_app():
