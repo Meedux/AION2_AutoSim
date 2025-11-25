@@ -1,1 +1,0 @@
-C:\Users\herre\OneDrive\Documents\python\AION\kmdf_driver\AIONVirtualHID\x64\Debug\AIONVirtualHID.sys

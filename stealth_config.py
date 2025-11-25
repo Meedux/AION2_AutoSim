@@ -77,7 +77,7 @@ MOB_CLICK_Y_MAX = 0.90  # 90% down from top of box (near bottom edge)
 # Mouse micro-jitter before click (pixels)
 MICRO_JITTER_BEFORE_CLICK = 3  # move within ±3px then settle
 
-# Double-click interval and button hold press times (seconds)
+# Targeting/attack interval and button hold press times (seconds)
 DOUBLE_CLICK_INTERVAL_MIN = 0.06
 DOUBLE_CLICK_INTERVAL_MAX = 0.22
 MOUSE_BUTTON_DOWN_MIN = 0.018
@@ -85,7 +85,7 @@ MOUSE_BUTTON_DOWN_MAX = 0.055
 PRE_CLICK_PAUSE_MIN = 0.020
 PRE_CLICK_PAUSE_MAX = 0.080
 
-# When avoiding double-click detection, we can do click-then-key, etc.
+# When avoiding detection, we can do key-based targeting then attack (Tab + R/T)
 # Primary attack key used for click-then-key strategy
 PRIMARY_ATTACK_KEY = '1'
 
@@ -100,7 +100,7 @@ STRATEGY_WEIGHT_CLICK_THEN_KEY = 0.85
 STRATEGY_WEIGHT_KEY_THEN_CLICK = 0.05
 STRATEGY_WEIGHT_RIGHT_CLICK = 0.1
 
-# Hard block sequential double-click-like patterns
+# Hard block sequential attack patterns (avoid mechanical repeated inputs)
 AVOID_SEQUENTIAL_CLICKS = True
 
 # ============================================================================

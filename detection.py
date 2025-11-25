@@ -7,7 +7,6 @@ from capture import CaptureWorker
 from model_client import LocalModelClient
 from action_planner import ActionPlanner
 from utils import get_window_rect
-import stealth_config
 # utils helpers (no jpeg encode needed for local model)
 
 
@@ -19,15 +18,15 @@ class DetectionController:
         self.hwnd = hwnd
         self.overlay_update = overlay_update
         self.log = log_fn
-        # Use stealth FPS to avoid CryEngine detection
-        self.fps = fps if fps is not None else stealth_config.DETECTION_FPS
+        # Default FPS (no stealth behavior). Higher default for more real-time overlay updates.
+        self.fps = fps if fps is not None else 30
 
         # keep capture at original size (no forced resize) to preserve mapping accuracy;
         # we'll make a resized copy for the model if needed inside the model client.
         self.capture = CaptureWorker(hwnd=hwnd, target_fps=max(5, self.fps * 2), resize_max=None)
         # local model uses models/aion.pt in repo
         self.client = LocalModelClient(weights_path="models/aion.pt")
-        # action planner will perform input actions (double-click / movement)
+        # action planner will perform input actions (Tab-target + R/T attacks / movement)
         # Enabled by default per user request; main window will also apply its stored preference.
         self.action_planner = ActionPlanner(hwnd=hwnd, enabled=True)
 
@@ -42,19 +41,16 @@ class DetectionController:
         self._startup_complete = False
 
     def start(self):
-        startup_delay = stealth_config.get_startup_delay()
-        self.log(f"Starting capture and detection (stealth startup delay: {startup_delay:.1f}s)")
+        # Start without extra startup delay (stealth removed)
+        self.log("Starting capture and detection")
         self.capture.start_capture()
         self._running.set()
         if not self._worker.is_alive():
             self._worker.start()
         
-        # Run startup delay in background thread
-        def _do_startup_delay():
-            time.sleep(startup_delay)
-            self._startup_complete = True
-            self.log("✓ Startup delay complete - automation active")
-        threading.Thread(target=_do_startup_delay, daemon=True).start()
+        # No startup delay — automation active immediately
+        self._startup_complete = True
+        self.log("✓ Automation active")
 
     def stop(self):
         self.log("Stopping detection")
@@ -75,6 +71,12 @@ class DetectionController:
                 # back to the original window coordinates.
                 orig_w, orig_h = self.capture.get_window_size() or (w, h)
                 frame_for_model = frame.copy()
+                # Always push latest known detections to overlay immediately so the overlay
+                # stays responsive even if inference takes longer than a single loop.
+                try:
+                    self.overlay_update(self._detections, (orig_w, orig_h))
+                except Exception:
+                    pass
                 # Let the model client decide resizing via its imgsz; but we will pass the frame_for_model as-is.
                 preds = self.client.predict(frame_for_model)
 
@@ -93,9 +95,10 @@ class DetectionController:
                     except Exception:
                         continue
 
+                # Update latest detection list (in pixel coords for the original window)
                 self._detections = conv
-                self.log(f"Received {len(conv)} detections (scaled to overlay {orig_w}x{orig_h})")
                 # push to overlay (pass overlay target size as orig window size)
+                # Push the new detections immediately to overlay
                 try:
                     self.overlay_update(self._detections, (orig_w, orig_h))
                 except Exception:

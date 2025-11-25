@@ -5,14 +5,14 @@ This manager:
 - Tracks combo set cooldowns
 - Executes combos when all skills are available
 - Uses hardware-level inputs via input_controller
-- Supports stealth attack mode (randomized between double-click, single skill, combo)
+- Supports stealth attack mode (randomized between Tab-target + R/T attacks, single skill, combo)
 """
 import time
 import random
 from typing import Dict, Optional, List, Tuple
 from loguru import logger
 import skill_combo_config
-from driver_input import focus_window, tap_key, hold_key
+from input_controller import focus_window, tap_key, hold_key
 
 
 class SkillComboManager:
@@ -164,12 +164,12 @@ class SkillComboManager:
             elif modifier == 'alt':
                 # Alt + key combination
                 # Hold Alt, press key, release Alt
-                from driver_input import press_key_combination
+                from input_controller import press_key_combination
                 press_key_combination('alt', key)
                 logger.debug(f"Skill executed: Alt+{key}")
             elif modifier == 'ctrl':
                 # Ctrl + key combination
-                from driver_input import press_key_combination
+                from input_controller import press_key_combination
                 press_key_combination('ctrl', key)
                 logger.debug(f"Skill executed: Ctrl+{key}")
             else:
@@ -497,8 +497,8 @@ class SkillComboManager:
         mode = self.choose_actionable_mode(has_health)
         
         if mode == 'standard_attack':
-            # Standard double-click attack (handled by caller)
-            logger.debug("Attack mode: Standard (double-click)")
+            # Standard keyboard-target attack (handled by caller) - Tab-target + R/T
+            logger.debug("Attack mode: Standard (Tab-target + R/T)")
             return ('standard_attack', True)
         
         elif mode == 'single_skill':

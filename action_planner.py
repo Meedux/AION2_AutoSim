@@ -1,23 +1,22 @@
 ﻿"""Action planner that maps detections to in-game actions.
 
 Behavior implemented per user spec:
-- If a mob is detected (priority: mob_oncursor, mob_near, mob_away) -> double-click it until
-  `mob_combat_health` for that mob disappears (assumed dead).
+ - When mobs detected the planner uses keyboard targeting: press `Tab` to lock the target and use `R`/`T` for light/heavy single-press attacks (no mouse double-clicks or drag-to-target).
+ - After target acquisition the planner enters a COMBAT period (duration depends on target size & distance, minimum 5s). After combat there's a 5s cooldown where `F` is pressed randomly.
 - If no mobs present, find map navigation dots (heuristic: classes containing 'map'|'dot'|'red'|'enemy')
   and move the player toward the nearest dot using W/A/S/D (W forward, S back, A/D turn).
 
 This module uses `input_controller` to send OS-level inputs.
 
-STEALTH MODE: Uses ultra-slow timing to avoid CryEngine anti-cheat detection.
+(Stealth mode removed) Uses deterministic timings and immediate actions.
 """
 import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
-from driver_input import focus_window, double_click_at, tap_key, hold_key
+from input_controller import focus_window, tap_key, hold_key
 import skill_combo_config
 import random
-import stealth_config
 
 
 def _center_of(d: Dict) -> Tuple[int, int]:
@@ -57,20 +56,17 @@ class ActionPlanner:
         self.conf_thresh = conf_thresh
         self._lock = threading.Lock()
         self._last_action = 0.0
-        # Use stealth timing - MUCH slower to avoid CryEngine detection
-        self._cooldown = stealth_config.ACTION_COOLDOWN_MIN
-        self._target_locked: Optional[Dict] = None
+        # Use non-stealth deterministic timing
+        self._cooldown = 0.2
+        # previous target lock removed; use self._current_target state instead
         
-        # Warmup tracking - first N actions get extra delays
+        # Warmup/idle tracking removed (no stealth behavior)
         self._action_count = 0
-        self._last_idle_check = time.time()
-        self._in_idle_state = False
-        self._idle_until = 0.0
         
-        # Movement macro state
-        self._current_movement_pattern = stealth_config.get_movement_pattern()
+        # Movement macro state (deterministic defaults)
+        self._current_movement_pattern = 'forward'
         self._movement_pattern_start = 0.0
-        self._movement_pattern_duration = stealth_config.get_movement_pattern_duration()
+        self._movement_pattern_duration = 2.0
         
         # Skill Combo Manager - handles skill macros with cooldown tracking
         try:
@@ -80,11 +76,15 @@ class ActionPlanner:
         except Exception as e:
             logger.warning(f"Skill Combo Manager not available: {e}")
             self.skill_combo_manager = None
-        # Simplified combat flow state (new behavior)
-        self._in_combat = False
+        # New state machine: scanning -> combat -> cooldown
+        self._mode = 'scanning'  # scanning | combat | cooldown
+        self._current_target: Optional[Dict] = None
         self._combat_until = 0.0
-        self._in_cooldown = False
         self._cooldown_until = 0.0
+        self._last_attack = 0.0
+        self._attack_interval = (0.45, 1.25)  # seconds between R/T presses during combat
+        self._last_cooldown_action = 0.0
+        self._cooldown_f_interval = (0.6, 1.8)  # random press F intervals during 5s cooldown
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -153,6 +153,48 @@ class ActionPlanner:
             if any(k in name for k in ("map", "dot", "red", "enemy", "map_dot", "map_enemy")):
                 candidates.append(d)
         return candidates
+
+    def _find_all_mobs(self, detections: List[Dict]) -> List[Dict]:
+        """Return all detections that look like mobs (class contains 'mob' except 'mob_combat_health')."""
+        out = []
+        for d in detections:
+            name = str(d.get('class', '')).lower()
+            if 'mob' in name and 'mob_combat_health' not in name:
+                try:
+                    if float(d.get('confidence', 0.0)) >= self.conf_thresh:
+                        out.append(d)
+                except Exception:
+                    out.append(d)
+        return out
+
+    def _compute_combat_duration(self, target: Dict, window_w: int, window_h: int) -> float:
+        """Heuristic: base 5s + scaled by target size and distance to lower-center of screen.
+
+        Larger targets and targets further from the player's lower-center require longer combat windows.
+        """
+        try:
+            tw = float(target.get('width', 0))
+            th = float(target.get('height', 0))
+            tx, ty = _center_of(target)
+        except Exception:
+            return 5.0
+
+        area = max(1.0, tw * th)
+        window_area = max(1.0, window_w * window_h)
+        area_ratio = area / window_area  # small value e.g. 0.01
+
+        # Lower-center reference point (player is slightly lower than center)
+        px = window_w / 2.0
+        py = window_h * 0.70
+        dist = ((tx - px) ** 2 + (ty - py) ** 2) ** 0.5
+        max_diag = (window_w ** 2 + window_h ** 2) ** 0.5
+        dist_ratio = dist / max(1.0, max_diag)
+
+        # scale more with size than distance. Keep within reasonable bounds
+        extra = (area_ratio * 30.0) + (dist_ratio * 8.0)
+        duration = max(5.0, 5.0 + extra)
+        # clamp to a sane max (e.g., 20s)
+        return min(duration, 20.0)
     
     def _find_north_map_dots(self, dots: List[Dict], window_w: int, window_h: int) -> List[Dict]:
         """
@@ -243,7 +285,7 @@ class ActionPlanner:
             tap_key('d')
             time.sleep(duration)
         
-        time.sleep(stealth_config.get_post_movement_delay())
+        time.sleep(0.05)
 
     def plan_and_execute(self, detections: List[Dict], window_rect: Tuple[int, int, int, int]):
         """detections are in target (window) pixel coords; window_rect is (left, top, w, h)
@@ -253,255 +295,135 @@ class ActionPlanner:
         
         now = time.time()
         
-        # Check if we're in idle simulation state
-        if self._in_idle_state:
-            if now < self._idle_until:
-                return  # Still idling, do nothing
-            else:
-                self._in_idle_state = False
-                logger.info("✓ Idle period ended, resuming actions")
-        
-        # Periodic idle simulation (simulates human "thinking")
-        if now - self._last_idle_check > stealth_config.IDLE_CHECK_INTERVAL:
-            self._last_idle_check = now
-            if stealth_config.should_idle():
-                idle_duration = stealth_config.get_idle_duration()
-                self._in_idle_state = True
-                self._idle_until = now + idle_duration
-                logger.info(f"⏸ Entering idle state for {idle_duration:.1f}s (human simulation)")
-                return
+        # Idle simulation removed (deterministic, continuous execution)
         
         # SYNC FIX: Detection loop controls timing at 1 FPS
         # Action planner executes on EVERY detection update (no extra cooldown)
         # This keeps detection overlay and combat actions perfectly synchronized
         
-        # Add extra delay for warmup actions (anti-cheat: simulate "getting oriented")
-        if self._action_count < stealth_config.WARMUP_ACTIONS:
-            warmup_delay = stealth_config.get_warmup_delay()
-            time.sleep(warmup_delay)
-            logger.debug(f"Warmup action {self._action_count + 1}/{stealth_config.WARMUP_ACTIONS} (+{warmup_delay:.1f}s)")
+        # Warmup removed — no extra delays
         
         self._last_action = now
         self._action_count += 1
 
         left, top, w, h = window_rect
 
-        # 1) Try to find mob target
-        target = self._find_target_mob(detections)
-        if target is not None:
-            # Calculate target position - click in LOWER PART of detection box
-            tx = float(target.get("x", 0))
-            ty = float(target.get("y", 0))
-            tw = float(target.get("width", 0))
-            th = float(target.get("height", 0))
-            
-            # Click in the LOWER PART of the box (70-90% down from top)
-            # This is WITHIN the box, not below it
-            y_percentage = random.uniform(stealth_config.MOB_CLICK_Y_MIN, stealth_config.MOB_CLICK_Y_MAX)
-            
-            # Add mouse jitter (randomization)
-            jitter_x, jitter_y = stealth_config.get_mouse_jitter()
-            
-            # Final click position (center X, lower part Y - WITHIN the box)
-            click_x = tx + (tw / 2.0) + jitter_x
-            click_y = ty + (th * y_percentage) + jitter_y
-            
-            screen_x = int(left + click_x)
-            screen_y = int(top + click_y)
-            
-            # focus window
-            focus_window(self.hwnd)
-            # if a health bar exists for this target, lock and keep clicking until health gone
-            health = self._find_health_for(target, detections)
-            
-            # STEALTH ATTACK MODE: Decide between standard attack, single skill, or combo
-            attack_mode = 'standard_attack'
-            if self.skill_combo_manager is not None:
-                try:
-                    attack_mode = self.skill_combo_manager.choose_actionable_mode(has_health=(health is not None))
-                except Exception as e:
-                    logger.error(f"Stealth attack mode decision error: {e}")
-                    attack_mode = 'standard_attack'
+        # Global cooldown behavior: if in cooldown mode, randomly press F during the cooldown window
+        if self._mode == 'cooldown':
+            if time.time() < self._cooldown_until:
+                # schedule random F presses during cooldown
+                if time.time() - self._last_cooldown_action >= random.uniform(*self._cooldown_f_interval):
+                    try:
+                        focus_window(self.hwnd)
+                        tap_key('f')
+                        self._last_cooldown_action = time.time()
+                        logger.info("ActionPlanner(COOLDOWN): pressed 'F' during cooldown")
+                    except Exception as e:
+                        logger.error(f"ActionPlanner(COOLDOWN): failed to press F: {e}")
+                return
+            else:
+                # cooldown finished — go back to scanning
+                self._mode = 'scanning'
+                self._current_target = None
+                logger.info("ActionPlanner: cooldown finished, back to scanning")
 
-            # Execute the chosen attack mode
-            if attack_mode == 'standard_attack' or self.skill_combo_manager is None:
-                # Standard attack via stealth click strategy
-                logger.info(f"ActionPlanner: [ATTACK CLICK] mob at ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
-                focus_window(self.hwnd)
+        # 1) New MOB targeting + combat state-machine
+        mobs = self._find_all_mobs(detections)
+
+        # SCANNING: detect mobs and acquire a target
+        if self._mode == 'scanning':
+            if mobs:
+                # Choose a reasonable candidate: prefer nearest to lower-center (player area)
+                px = w / 2.0
+                py = h * 0.70
+                def score_m(d):
+                    cx, cy = _center_of(d)
+                    # smaller score = better (closer and larger)
+                    dist = ((cx - px) ** 2 + (cy - py) ** 2) ** 0.5
+                    area = (d.get('width', 0) or 0) * (d.get('height', 0) or 0)
+                    return dist - (area * 0.05)
+
+                mobs.sort(key=score_m)
+                candidate = mobs[0]
+
+                # Acquire target: press tab to lock-on and then trigger an attack (R or T)
                 try:
-                    from driver_input import perform_human_attack_click
-                    perform_human_attack_click(screen_x, screen_y)
-                    time.sleep(stealth_config.get_post_click_delay())
+                    focus_window(self.hwnd)
+                    # Press Tab to target (one press)
+                    tap_key('tab')
+                    # small human-like delay
+                    time.sleep(random.uniform(0.08, 0.20))
+                    # press either 'r' or 't' once
+                    atk = random.choice(['r', 't'])
+                    tap_key(atk)
+                    logger.info(f"ActionPlanner: target acquired via TAB and initial attack '{atk.upper()}'")
                 except Exception as e:
-                    logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
-            elif attack_mode == 'single_skill':
-                # Single click the target first, then execute one skill (respects cooldowns)
-                logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill at ({screen_x},{screen_y})")
-                focus_window(self.hwnd)
-                try:
-                    from driver_input import click_at
-                    click_at(screen_x, screen_y)
-                    time.sleep(stealth_config.get_post_click_delay())
-                except Exception as e:
-                    logger.error(f"ActionPlanner: click_at failed: {e}")
-                # Now execute a single available skill
-                success = False
-                try:
-                    success = self.skill_combo_manager.execute_single_skill()
-                except Exception as e:
-                    logger.error(f"Single skill execution error: {e}")
-                if not success and self.skill_combo_manager is not None:
-                    # Try a combo instead before falling back
-                    logger.debug("No available single skill; trying combo fallback")
+                    logger.error(f"ActionPlanner: initial target/attack failed: {e}")
+
+                # start combat mode with duration based on target size/distance
+                dur = self._compute_combat_duration(candidate, w, h)
+                self._current_target = candidate
+                self._combat_until = time.time() + dur
+                self._mode = 'combat'
+                self._last_attack = 0.0
+                logger.info(f"ActionPlanner: entering COMBAT mode for {dur:.1f}s")
+                return
+
+        # During COMBAT, perform R/T attacks at humanlike intervals
+        if self._mode == 'combat':
+            if time.time() < self._combat_until:
+                # Attack cadence - do R or T single presses
+                if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
+                    focus_window(self.hwnd)
                     try:
-                        success = self.skill_combo_manager.try_execute_random_combo()
+                        atk = random.choice(['r', 't'])
+                        tap_key(atk)
+                        self._last_attack = time.time()
+                        logger.info(f"ActionPlanner(COMBAT): pressed '{atk.upper()}' (single) against target")
                     except Exception as e:
-                        logger.error(f"Combo fallback error: {e}")
-                if not success:
-                    # Final fallback to attack click
-                    try:
-                        from driver_input import perform_human_attack_click
-                        perform_human_attack_click(screen_x, screen_y)
-                        time.sleep(stealth_config.get_post_click_delay())
-                    except Exception as e:
-                        logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
-            elif attack_mode == 'combo_set':
-                # Single click the target first, then execute a random ready combo
-                logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo at ({screen_x},{screen_y})")
-                focus_window(self.hwnd)
-                try:
-                    from driver_input import click_at
-                    click_at(screen_x, screen_y)
-                    time.sleep(stealth_config.get_post_click_delay())
-                except Exception as e:
-                    logger.error(f"ActionPlanner: click_at failed: {e}")
-                success = False
-                try:
-                    success = self.skill_combo_manager.try_execute_random_combo()
-                except Exception as e:
-                    logger.error(f"Combo execution error: {e}")
-                if not success and self.skill_combo_manager is not None:
-                    # Try single skill before fallback
-                    logger.debug("No ready combo; trying single skill fallback")
-                    try:
-                        success = self.skill_combo_manager.execute_single_skill()
-                    except Exception as e:
-                        logger.error(f"Single skill fallback error: {e}")
-                if not success:
-                    # Final fallback
-                    try:
-                        from driver_input import perform_human_attack_click
-                        perform_human_attack_click(screen_x, screen_y)
-                        time.sleep(stealth_config.get_post_click_delay())
-                    except Exception as e:
-                        logger.error(f"ActionPlanner: perform_human_attack_click failed: {e}")
-            
-            # set target lock if health present
-            if health:
-                self._target_locked = target
-            return
+                        logger.error(f"ActionPlanner(COMBAT): attack press failed: {e}")
+                return
+            else:
+                # combat period ended -> go to cooldown
+                self._mode = 'cooldown'
+                self._cooldown_until = time.time() + 5.0
+                self._last_cooldown_action = 0.0
+                logger.info("ActionPlanner: combat finished, entering 5s cooldown (F spam)")
+                return
 
         # If we had a locked target (we were attacking), but now no mob target found,
         # check if health still present for locked target; if so, try to click its last pos
-        if self._target_locked is not None:
+        if self._current_target is not None:
             # check health across detections for any mob_combat_health overlapping previous lock
-            health_remaining = any((str(d.get("class","")).lower() == "mob_combat_health" and _iou(self._target_locked, d) > 0.05) for d in detections)
+            health_remaining = any((str(d.get("class","")) .lower() == "mob_combat_health" and _iou(self._current_target, d) > 0.05) for d in detections)
             if health_remaining:
-                tx, ty = _center_of(self._target_locked)
+                tx, ty = _center_of(self._current_target)
                 screen_x = int(left + tx)
                 screen_y = int(top + ty)
-                # STEALTH ATTACK MODE for locked target (same decision flow)
-                attack_mode = 'standard_attack'
-                if self.skill_combo_manager is not None:
-                    try:
-                        attack_mode = self.skill_combo_manager.choose_actionable_mode(has_health=health_remaining)
-                    except Exception as e:
-                        logger.error(f"Stealth attack mode decision error (locked): {e}")
-                        attack_mode = 'standard_attack'
-
-                # Execute attack
-                if attack_mode == 'standard_attack' or self.skill_combo_manager is None:
-                    logger.info(f"ActionPlanner: [ATTACK CLICK] locked target at ({screen_x},{screen_y})")
+                # If health remains, stay engaged — press a small attack (R/T) occasionally
+                if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
                     focus_window(self.hwnd)
                     try:
-                        from driver_input import perform_human_attack_click
-                        perform_human_attack_click(screen_x, screen_y)
+                        atk = random.choice(['r', 't'])
+                        tap_key(atk)
+                        self._last_attack = time.time()
+                        logger.info(f"ActionPlanner: locked target attack '{atk.upper()}'")
                     except Exception as e:
-                        logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")
-                elif attack_mode == 'single_skill':
-                    logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill on locked target at ({screen_x},{screen_y})")
-                    focus_window(self.hwnd)
-                    try:
-                        from driver_input import click_at
-                        click_at(screen_x, screen_y)
-                        time.sleep(stealth_config.get_post_click_delay())
-                    except Exception as e:
-                        logger.error(f"ActionPlanner: click_at failed (locked): {e}")
-                    success = False
-                    try:
-                        success = self.skill_combo_manager.execute_single_skill()
-                    except Exception as e:
-                        logger.error(f"Single skill execution error (locked): {e}")
-                    if not success and self.skill_combo_manager is not None:
-                        try:
-                            success = self.skill_combo_manager.try_execute_random_combo()
-                        except Exception as e:
-                            logger.error(f"Combo fallback error (locked): {e}")
-                    if not success:
-                        try:
-                            from driver_input import perform_human_attack_click
-                            perform_human_attack_click(screen_x, screen_y)
-                        except Exception as e:
-                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
-                elif attack_mode == 'combo_set':
-                    logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo on locked target at ({screen_x},{screen_y})")
-                    focus_window(self.hwnd)
-                    try:
-                        from driver_input import click_at
-                        click_at(screen_x, screen_y)
-                        time.sleep(stealth_config.get_post_click_delay())
-                    except Exception as e:
-                        logger.error(f"ActionPlanner: click_at failed (locked): {e}")
-                    success = False
-                    try:
-                        success = self.skill_combo_manager.try_execute_random_combo()
-                    except Exception as e:
-                        logger.error(f"Combo execution error (locked): {e}")
-                    if not success and self.skill_combo_manager is not None:
-                        try:
-                            success = self.skill_combo_manager.execute_single_skill()
-                        except Exception as e:
-                            logger.error(f"Single skill fallback error (locked): {e}")
-                    if not success:
-                        try:
-                            from driver_input import perform_human_attack_click
-                            perform_human_attack_click(screen_x, screen_y)
-                        except Exception as e:
-                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
-                    else:
-                        logger.debug("Skill/combo failed on locked target, using attack click strategy")
-                        focus_window(self.hwnd)
-                        try:
-                            from driver_input import perform_human_attack_click
-                            perform_human_attack_click(screen_x, screen_y)
-                        except Exception as e:
-                            logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")
-                
+                        logger.error(f"ActionPlanner: locked attack failed: {e}")
                 return
             else:
                 # health gone -> target dead
                 logger.info("ActionPlanner: target appears dead, clearing lock")
-                self._target_locked = None
+                self._current_target = None
 
         # 2) No mobs: navigate using map dots (minimap red dots)
         dots = self._find_map_dots(detections)
         if len(dots) == 0:
-            # No map dots - use movement macro to explore
+                # No map dots - use movement macro to explore
             now = time.time()
-            if stealth_config.should_change_movement_pattern() or \
-               (now - self._movement_pattern_start > self._movement_pattern_duration):
-                self._current_movement_pattern = stealth_config.get_movement_pattern()
-                self._movement_pattern_duration = stealth_config.get_movement_pattern_duration()
+            if (now - self._movement_pattern_start > self._movement_pattern_duration):
+                self._current_movement_pattern = 'forward'
+                self._movement_pattern_duration = 2.0
                 self._movement_pattern_start = now
             
             self._execute_movement_macro(
@@ -546,13 +468,13 @@ class ActionPlanner:
         # Check if we need a 70-degree turn (large offset)
         if abs(ndx) > turn_thr_70deg:
             # Big turn (70 degrees) - HOLD the key down for the full duration
-            hold_duration = stealth_config.get_turn_70_degrees_duration()
+            hold_duration = 1.2
             if ndx > 0:
                 logger.info(f"ActionPlanner: BIG TURN right (D) ~70° HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
                     hold_key('d', hold_duration)  # HOLD key for 70-degree turn
-                    time.sleep(stealth_config.get_post_movement_delay())
+                    time.sleep(0.05)
                 except Exception as e:
                     logger.error(f"ActionPlanner: hold_key D failed: {e}")
             else:
@@ -560,18 +482,18 @@ class ActionPlanner:
                 focus_window(self.hwnd)
                 try:
                     hold_key('a', hold_duration)  # HOLD key for 70-degree turn
-                    time.sleep(stealth_config.get_post_movement_delay())
+                    time.sleep(0.05)
                 except Exception as e:
                     logger.error(f"ActionPlanner: hold_key A failed: {e}")
         elif abs(ndx) > turn_thr_small:
             # Small turn adjustment - also HOLD for duration
-            hold_duration = stealth_config.get_key_hold_duration()
+            hold_duration = 0.6
             if ndx > 0:
                 logger.info(f"ActionPlanner: turning right (D) HOLDING for {hold_duration:.2f}s")
                 focus_window(self.hwnd)
                 try:
                     hold_key('d', hold_duration)  # HOLD key for small turn
-                    time.sleep(stealth_config.get_post_movement_delay())
+                    time.sleep(0.05)
                 except Exception as e:
                     logger.error(f"ActionPlanner: hold_key D failed: {e}")
             else:
@@ -579,29 +501,29 @@ class ActionPlanner:
                 focus_window(self.hwnd)
                 try:
                     hold_key('a', hold_duration)  # HOLD key for small turn
-                    time.sleep(stealth_config.get_post_movement_delay())
+                    time.sleep(0.05)
                 except Exception as e:
                     logger.error(f"ActionPlanner: hold_key A failed: {e}")
         else:
             # face roughly toward target; move forward/back depending on vertical
             if ndy < -forward_thr:
                 # target is above center -> move forward
-                hold_duration = stealth_config.get_key_hold_duration()
+                hold_duration = 0.6
                 logger.info(f"ActionPlanner: moving forward (W) for {hold_duration:.2f}s")
                 focus_window(self.hwnd)  # Ensure focused before input
                 try:
                     tap_key('w')
                     time.sleep(hold_duration)  # Hold the key
-                    time.sleep(stealth_config.get_post_movement_delay())  # Post-movement delay
+                    time.sleep(0.05)  # Post-movement delay
                 except Exception as e:
                     logger.error(f"ActionPlanner: tap_key W failed: {e}")
             elif ndy > forward_thr:
-                hold_duration = stealth_config.get_key_hold_duration()
+                hold_duration = 0.6
                 logger.info(f"ActionPlanner: moving backward (S) for {hold_duration:.2f}s")
                 focus_window(self.hwnd)  # Ensure focused before input
                 try:
                     tap_key('s')
                     time.sleep(hold_duration)  # Hold the key
-                    time.sleep(stealth_config.get_post_movement_delay())  # Post-movement delay
+                    time.sleep(0.05)  # Post-movement delay
                 except Exception as e:
                     logger.error(f"ActionPlanner: tap_key S failed: {e}")

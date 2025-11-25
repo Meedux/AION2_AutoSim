@@ -128,7 +128,7 @@ COMBO_PRIORITY = None  # None = use default order, or [2, 0, 1] for custom prior
 
 # Attack mode randomization - makes bot behavior unpredictable
 # The bot will randomly choose between:
-# 1. Standard attack (double-click)
+# 1. Standard attack (Tab-target + R/T)
 # 2. Single skill press
 # 3. Full combo set
 
@@ -136,7 +136,7 @@ STEALTH_ATTACK_MODE_ENABLED = True
 
 # Probability weights for each attack type (must sum to 1.0)
 ATTACK_MODE_WEIGHTS = {
-    'standard_attack': 0.50,    # 50% chance - double-click only
+    'standard_attack': 0.50,    # 50% chance - Tab-target + R/T (keyboard attack)
     'single_skill': 0.30,        # 30% chance - press one skill
     'combo_set': 0.20,           # 20% chance - execute full combo
 }

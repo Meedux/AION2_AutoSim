@@ -1,13 +1,13 @@
 # AION Auto-Simulator
 
-AI-powered automation for AION with **advanced skill combo macros**, stealth attack modes, and hardware-level input simulation.
+AI-powered automation for AION with **advanced skill combo macros**, configurable attack modes, and hardware-level input simulation.
 
 ## ✨ Features
 
 - 🎯 **Skill Combo Macro System** - 36 configurable keybinds with individual cooldown tracking
-- 🎲 **Stealth Attack Mode** - Randomizes between double-click, single skills, and combo sets
+- 🎲 **Attack Mode** - Randomizes between standard Tab-target attacks, single skills, and combo sets
 - 🖱️ **Smart Clicking** - Clicks lower part of detection boxes, nearest mob targeting
-- ⌨️ **Hardware-Level Input** - AutoHotkey for maximum game compatibility
+- ⌨️ **User-mode Input (pydirectinput)** - Uses `pydirectinput` (PyAutoGUI-backed) for input simulation
 - 🔄 **Smooth Mouse Movement** - Bezier curve dragging (no teleport)
 - 🎮 **70° Turns** - Proper key holding for wide angle turns
 - 🗺️ **Minimap Navigation** - Red dot detection and pathfinding
@@ -23,7 +23,7 @@ AI-powered automation for AION with **advanced skill combo macros**, stealth att
 2. **Configure in GUI**:
    - Select your AION game window
    - Adjust skill combo settings in the UI
-   - Set attack mode weights (double-click/skill/combo)
+   - Set attack mode weights (standard/tab-target vs skills vs combo)
    - Click "Start" to begin automation
 
 3. **Emergency Controls**:
@@ -35,7 +35,7 @@ AI-powered automation for AION with **advanced skill combo macros**, stealth att
 - **Windows 10/11**
 - **Python 3.8+**
 - **Administrator privileges** (required for hardware-level input)
-- **AutoHotkey** (automatically installed via pip)
+*Optional:* AutoHotkey (only required if you want to run older AHK scripts manually)
 
 ## 📦 Installation
 
@@ -77,8 +77,8 @@ The skill combo system provides **36 configurable keybind slots** with intellige
 **All configuration is done through the GUI:**
 
 1. **Main Window Controls:**
-   - ✅ **Enable/Disable** stealth attack mode
-   - ✅ **Attack Mode Weights** (double-click vs skills vs combos)
+   - ✅ **Enable/Disable** attack mode randomization
+   - ✅ **Attack Mode Weights** (standard vs skills vs combos)
    - ✅ **Health Requirement** (only use skills when health bar detected)
 
 2. **⚙️ Edit Individual Skills Button:**
@@ -98,17 +98,17 @@ The skill combo system provides **36 configurable keybind slots** with intellige
 
 See `GUI_SKILL_EDITOR_GUIDE.md` for detailed instructions.
 
-### Stealth Attack Mode
+### Attack Mode
 
 **Randomized Attack Patterns:**
-- **50%** - Standard double-click attack
+- **50%** - Standard Tab-target attack
 - **30%** - Single random skill press
 - **20%** - Full combo set execution
 
 **Smart Behavior:**
 - ✅ Only uses skills when `mob_combat_health` is detected
-- ✅ **Single click** + skill/combo (not double-click)
-- ✅ **Double click** for standard attacks
+- ✅ **Single-target** + skill/combo (not mouse click based)
+- ✅ **Keyboard-targeting** for standard attacks (Tab + R/T)
 - ✅ Tracks individual skill cooldowns
 - ✅ Tracks combo set cooldowns
 - ✅ Only executes when ALL skills ready
@@ -121,8 +121,8 @@ Combat Detected → Choose Attack Mode (random)
     ┌──────────────────┼──────────────────┐
     │                  │                  │
 Standard (50%)    Single Skill (30%)   Combo (20%)
-    │                  │                  │
-Double-click      Single-click +      Single-click +
+   │                  │                  │
+Tab-target       Single-click +      Single-click +
     mob           random skill         skill combo
 ```
 
@@ -133,23 +133,14 @@ Double-click      Single-click +      Single-click +
 3. Single-clicks mob to target
 4. Presses skill '2' (hardware-level)
 5. Skill '2' goes on 12s cooldown
-6. Next attack: might be double-click (50%) or combo (20%)
+6. Next attack: might be a Tab-target (50%) or combo (20%)
 ```
 
 ### Testing
 
-```bash
-# Validate configuration
-python test_skill_combos.py
-```
-
-**Output:**
-```
-✓ Configuration is valid
-✓ 36 keybind slots available
-✓ Stealth attack mode: ENABLED
-✓ Attack weights: Standard=50%, Skill=30%, Combo=20%
-```
+Unit tests were removed when the project was converted to a purely
+user-mode input implementation; use the GUI or run the application to
+validate behavior interactively.
 
 ---
 
@@ -164,10 +155,10 @@ python test_skill_combos.py
 
 ### Attack Modes
 
-1. **Standard Attack (Double-Click)**:
-   - Double-clicks mob location
+1. **Standard Attack (Tab + R/T)**:
+   - Targets the next monster with `Tab`, then performs a single R (light) or T (heavy) press to initiate combat
    - Most common (50% default)
-   - No skill cooldowns
+   - No mouse double-click or drag is used — targeting is keyboard-based
 
 2. **Single Skill Attack**:
    - Single-clicks to target mob
@@ -188,25 +179,9 @@ python test_skill_combos.py
 
 ---
 
-## 🛡️ CryEngine Anti-Cheat Evasion
+## Input timing and attack modes
 
-### Stealth Timing System
-
-- **Detection Rate**: 1 FPS (ultra-conservative)
-- **Startup Delay**: 8-15 seconds before any actions
-- **Warmup Period**: First 10 actions extra slow
-- **Action Cooldown**: 0.8-2.0s randomized delays
-- **Idle Simulation**: Random 4-12s pauses (35% chance)
-- **Mouse Jitter**: ±15 pixels randomization
-
-### Why These Features?
-
-AION uses CryEngine with aggressive anti-cheat. The bot:
-1. Runs at **1 FPS** to avoid detection polling
-2. Adds **startup delay** (simulates loading)
-3. Uses **randomized timing** (unpredictable behavior)
-4. Simulates **idle periods** (human "thinking")
-5. Uses **hardware input** (bypasses software blocks)
+The project provides configurable attack modes and reasonable default input timings. The application uses `pydirectinput` for input simulation and offers configurable combo and skill execution behavior.
 
 ---
 
@@ -214,20 +189,19 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 
 ### Input Methods
 
-**Primary: AutoHotkey Hardware-Level** (default)
-- ✅ True hardware simulation
-- ✅ Bypasses most anti-cheat systems
-- ✅ Supports modifier keys (Alt+, Ctrl+)
-- ✅ Reliable key holding for turns
+**Primary: pydirectinput (PyDirectInput / PyAutoGUI-backed)**
+This project now uses `pydirectinput` (a PyAutoGUI-derived library) as the primary
+user-mode input driver. It's simpler to install and works cross-compatibly on Windows.
 
-**Fallback: Windows SendInput API**
-- ✅ Native Windows API for input simulation
-- ✅ Direct DirectX-compatible input
-- ✅ Used when AutoHotkey unavailable
+- ✅ No kernel driver required
+- ✅ Works well for most automation/testing scenarios
+
+*Legacy:* AutoHotkey hardware-level option is no longer used by default. The
+project now favors `pydirectinput` for a simpler, driver-free test experience.
 
 ### AI Object Detection
 
-- **YOLOv8 Model**: Real-time detection at 1 FPS
+- **YOLOv8 Model**: Real-time detection (overlay updated frequently, model-driven rate)
 - **Classes Detected**:
   - `mob_target` - Enemy mobs
   - `mob_combat_health` - Active health bars
@@ -241,9 +215,9 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 ### Main Window Controls
 
 **Directly in the main program:**
-- **Stealth Attack Mode** - Checkbox to enable randomized attacks
+- **Attack Mode** - Checkbox to enable randomized attacks
 - **Attack Mode Weights** - Spinboxes for probability distribution:
-  - Double-Click Weight (default: 50%)
+   - Standard Attack Weight (Tab-target) (default: 50%)
   - Single Skill Weight (default: 30%)
   - Combo Set Weight (default: 20%)
 - **Health Requirement** - Checkbox to only use skills when mob health detected
@@ -277,8 +251,8 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 
 | Setting | Location | Default | Description |
 |---------|----------|---------|-------------|
-| Stealth Mode | Main Window | Enabled | Randomize attack patterns |
-| Double-Click Weight | Main Window | 0.50 | Standard attack probability |
+ | Attack Mode | Main Window | Enabled | Randomize attack patterns |
+| Standard Attack Weight | Main Window | 0.50 | Standard attack probability |
 | Single Skill Weight | Main Window | 0.30 | Single skill probability |
 | Combo Set Weight | Main Window | 0.20 | Combo execution probability |
 | Health Requirement | Main Window | Enabled | Only use skills with health bar |
@@ -291,20 +265,20 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 
 ## 📋 Usage Examples (All GUI-Based!)
 
-### Example 1: Pure Double-Click Bot (No Skills)
+### Example 1: Pure Keyboard-Target Bot (No Skills)
 
 **In Main Window:**
-- ✓ Uncheck "Enable Stealth Attack Mode"
+- ✓ Uncheck "Enable randomized attack mode"
 
-**Result:** Bot will **only** double-click mobs (no skills used)
+**Result:** Bot will **only** target with Tab and use R/T (no skills used)
 
 ---
 
 ### Example 2: Always Use Combo Sets
 
 **In Main Window:**
-- ✓ Check "Enable Stealth Attack Mode"
-- Set Double-Click Weight: **0.00** (0%)
+- ✓ Check "Enable randomized attack mode"
+   - Set Standard Attack Weight (Tab-target): **0.00** (0%)
 - Set Single Skill Weight: **0.00** (0%)
 - Set Combo Set Weight: **1.00** (100%)
 
@@ -315,8 +289,8 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 ### Example 3: Balanced Combat (Default)
 
 **In Main Window:**
-- ✓ Check "Enable Stealth Attack Mode"
-- Set Double-Click Weight: **0.50** (50%)
+- ✓ Check "Enable randomized attack mode"
+   - Set Standard Attack Weight (Tab-target): **0.50** (50%)
 - Set Single Skill Weight: **0.30** (30%)
 - Set Combo Set Weight: **0.20** (20%)
 
@@ -327,8 +301,8 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 ### Example 4: High Skill Usage (Aggressive)
 
 **In Main Window:**
-- ✓ Check "Enable Stealth Attack Mode"
-- Set Double-Click Weight: **0.20** (20%)
+- ✓ Check "Enable randomized attack mode"
+   - Set Standard Attack Weight (Tab-target): **0.20** (20%)
 - Set Single Skill Weight: **0.50** (50%)
 - Set Combo Set Weight: **0.30** (30%)
 
@@ -364,10 +338,10 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 
 ### Skills Not Triggering
 
-**Symptoms**: Bot only double-clicks, never uses skills
+**Symptoms**: Bot only uses standard Tab-target attacks, never uses skills
 
 **Solutions**:
-1. Check `STEALTH_ATTACK_MODE_ENABLED = True`
+1. Check `ATTACK_MODE_RANDOMIZATION_ENABLED = True`
 2. Verify attack weights sum to ~1.0
 3. Ensure `REQUIRE_MOB_HEALTH_FOR_SKILLS = True` and health bars are detected
 4. Check individual skill cooldowns (may still be on cooldown)
@@ -394,7 +368,7 @@ AION uses CryEngine with aggressive anti-cheat. The bot:
 **Solutions**:
 1. **Run as Administrator** (required for hardware input)
 2. Check AutoHotkey installed: `pip install ahk`
-3. Fallback to SendInput: Edit `input_controller.py` and remove AutoHotkey dependency
+3. Fallback to pydirectinput: Edit `input_controller.py` and remove AutoHotkey dependency
 4. Verify game accepts modifier keys (some games block Alt+/Ctrl+)
 
 ---

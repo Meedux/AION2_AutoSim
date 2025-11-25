@@ -14,3 +14,4 @@ ahk>=1.0.0  # HARDWARE-LEVEL inputs for game automation
 torch>=1.12.0
 torchvision>=0.13.0
 ultralytics>=8.0.0
+pydirectinput>=1.0.4

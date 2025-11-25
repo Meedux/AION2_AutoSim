@@ -130,4 +130,4 @@ models/*.onnx
 *.log
 
 # .vs
-kmdf_driver/AIONVirtualHID/.vs
+.github
