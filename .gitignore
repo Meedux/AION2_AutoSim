@@ -128,3 +128,6 @@ logs/
 models/*.pt  # Ignore large model files, keep scripts for download
 models/*.onnx
 *.log
+
+# .vs
+kmdf_driver/AIONVirtualHID/.vs

@@ -1,142 +1,128 @@
-"""Input controller using AutoHotkey HARDWARE-LEVEL inputs for maximum game compatibility.
 
-This uses AutoHotkey's hardware-level input methods which directly simulate
-physical keyboard and mouse hardware. This is the most reliable method for
-protected games like AION that block software-level inputs.
+"""Compatibility shim that delegates to the driver-backed implementation.
 
-The AHK script runs in the background and provides true hardware-level simulation.
-
-ADVANCED FEATURES:
-- Smooth mouse dragging with Bezier curves (no instant teleport)
-- Human-like movement patterns
-- Randomized timing
+All previous input functions were migrated to driver_input.py. This file keeps
+backwards compatibility for imports that reference input_controller.
 """
-import time
-import os
-import sys
+
+from .driver_input import *
+
+__all__ = [
+    'open_driver', 'close_driver', 'tap_key', 'hold_key', 'move_mouse_to', 'click_at', 'double_click_at',
+    'perform_human_attack_click', 'focus_window', 'set_active_hwnd', 'is_window_foreground', 'close'
+]
+"""AION Input Controller — KMDF virtual HID driver backend
+
+This module replaces AutoHotkey and SendInput with a kernel-mode driver channel.
+It opens a handle to the driver (\\.\AIONVirtualHID) and sends IOCTLs to request
+hardware-level keyboard and mouse actions.
+
+Supported keys: Tab, R, T, F (scancodes defined in the driver). Mouse: relative movement, left and right click.
+
+All functions keep the same public signatures used in the rest of the project so integration is straightforward.
+"""
+
 import ctypes
+import time
 from ctypes import wintypes
-import win32con
 import win32gui
-from pathlib import Path
+import win32con
 from loguru import logger
-import random
-import math
 import stealth_config
 
-# Try to import AHK library for hardware-level inputs
-try:
-    from ahk import AHK
-    
-    # Find AutoHotkey executable
-    ahk_paths = [
-        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyU64.exe'),
-        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyU32.exe'),
-        os.path.join(os.path.dirname(__file__), 'ahk', 'AutoHotkeyA32.exe'),
-    ]
-    
-    ahk_exe = None
-    for path in ahk_paths:
-        if os.path.exists(path):
-            ahk_exe = path
-            logger.info(f"Found AutoHotkey at: {path}")
-            break
-    
-    if ahk_exe:
-        ahk = AHK(executable_path=ahk_exe)
-        logger.info("✓ AutoHotkey HARDWARE-LEVEL input controller loaded")
-        USE_HARDWARE_AHK = True
-    else:
-        logger.warning("AutoHotkey.exe not found - falling back to SendInput")
-        USE_HARDWARE_AHK = False
-        
-except Exception as e:
-    logger.warning(f"Could not load AHK hardware controller: {e}")
-    logger.warning("Falling back to SendInput API")
-    USE_HARDWARE_AHK = False
+# IOCTL codes (must match kmdf_driver/device.h)
+IOCTL_HID_KEYDOWN   = 0x80002004
+IOCTL_HID_KEYUP     = 0x80002008
+IOCTL_HID_MOUSEMOVE = 0x8000200C
+IOCTL_HID_LEFTCLICK = 0x80002010
+IOCTL_HID_RIGHTCLICK= 0x80002014
 
-# Windows API constants and structures for SendInput
-INPUT_MOUSE = 0
-INPUT_KEYBOARD = 1
+# Driver path — driver creates a DOS symbolic link named AIONVirtualHID
+DEFAULT_DEVICE_PATH = r"\\.\AIONVirtualHID"
 
-KEYEVENTF_EXTENDEDKEY = 0x0001
-KEYEVENTF_KEYUP = 0x0002
-KEYEVENTF_UNICODE = 0x0004
-KEYEVENTF_SCANCODE = 0x0008
-
-MOUSEEVENTF_MOVE = 0x0001
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_RIGHTDOWN = 0x0008
-MOUSEEVENTF_RIGHTUP = 0x0010
-MOUSEEVENTF_MIDDLEDOWN = 0x0020
-MOUSEEVENTF_MIDDLEUP = 0x0040
-MOUSEEVENTF_ABSOLUTE = 0x8000
-
-# Virtual key codes for common keys
-VK_CODES = {
-    'w': 0x57, 'a': 0x41, 's': 0x53, 'd': 0x44,
-    'q': 0x51, 'e': 0x45, 'r': 0x52, 'f': 0x46,
-    't': 0x54, 'y': 0x59, 'u': 0x55, 'i': 0x49,
-    'o': 0x4F, 'p': 0x50, 'g': 0x47, 'h': 0x48,
-    'j': 0x4A, 'k': 0x4B, 'l': 0x4C, 'z': 0x5A,
-    'x': 0x58, 'c': 0x43, 'v': 0x56, 'b': 0x42,
-    'n': 0x4E, 'm': 0x4D,
-    '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34,
-    '5': 0x35, '6': 0x36, '7': 0x37, '8': 0x38,
-    '9': 0x39, '0': 0x30,
-    'space': 0x20, 'tab': 0x09, 'esc': 0x1B, 'escape': 0x1B,
-    'enter': 0x0D, 'return': 0x0D, 'shift': 0x10,
-    'ctrl': 0x11, 'control': 0x11, 'alt': 0x12,
-    'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73,
-    'f5': 0x74, 'f6': 0x75, 'f7': 0x76, 'f8': 0x77,
-    'f9': 0x78, 'f10': 0x79, 'f11': 0x7A, 'f12': 0x7B,
+# Key scancodes (driver must implement these exact values)
+KEY_SCANCODE = {
+    'tab': 0x0F,
+    'r': 0x15,
+    't': 0x14,
+    'f': 0x09,
 }
 
-# Define input structures for SendInput
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
-    ]
+# Global driver handle (ctypes.wintypes.HANDLE)
+_driver_handle = None
 
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [
-        ("wVk", wintypes.WORD),
-        ("wScan", wintypes.WORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
-    ]
+# Track active target window for optional foreground-only enforcement
+ACTIVE_HWND = None
 
-class HARDWAREINPUT(ctypes.Structure):
-    _fields_ = [
-        ("uMsg", wintypes.DWORD),
-        ("wParamL", wintypes.WORD),
-        ("wParamH", wintypes.WORD),
-    ]
 
-class INPUT_UNION(ctypes.Union):
-    _fields_ = [
-        ("mi", MOUSEINPUT),
-        ("ki", KEYBDINPUT),
-        ("hi", HARDWAREINPUT),
-    ]
+def open_driver(path: str = DEFAULT_DEVICE_PATH):
+    """Open and cache a handle to the kernel-mode driver.
 
-class INPUT(ctypes.Structure):
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("union", INPUT_UNION),
-    ]
+    Returns: handle or None (if device not present)
+    """
+    global _driver_handle
+    if _driver_handle:
+        return _driver_handle
 
-# Load user32.dll for SendInput
-user32 = ctypes.windll.user32
+    CreateFileW = ctypes.windll.kernel32.CreateFileW
+    CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    CreateFileW.restype = wintypes.HANDLE
 
-logger.info("✓ Windows SendInput API ready for input control")
+    GENERIC_READ = 0x80000000
+    GENERIC_WRITE = 0x40000000
+    FILE_SHARE_READ = 0x1
+    FILE_SHARE_WRITE = 0x2
+    OPEN_EXISTING = 3
+
+    try:
+        h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None)
+        if h == wintypes.HANDLE(-1).value:
+            logger.warning("AION KMDF driver not available at %s" % path)
+            _driver_handle = None
+            return None
+        _driver_handle = h
+        logger.info("Opened KMDF driver handle %s" % path)
+        return _driver_handle
+    except Exception as e:
+        logger.exception("open_driver failed: %s" % e)
+        _driver_handle = None
+        return None
+
+
+def close_driver():
+    global _driver_handle
+    try:
+        if _driver_handle:
+            ctypes.windll.kernel32.CloseHandle(_driver_handle)
+            _driver_handle = None
+    except Exception:
+        pass
+
+
+def _device_io_control(code: int, in_bytes: bytes = None):
+    """Send DeviceIoControl to the driver. Returns True/False."""
+    h = open_driver()
+    if not h:
+        return False
+
+    DeviceIoControl = ctypes.windll.kernel32.DeviceIoControl
+    DeviceIoControl.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+    DeviceIoControl.restype = wintypes.BOOL
+
+    in_ptr = None
+    in_size = 0
+    if in_bytes is not None:
+        in_size = len(in_bytes)
+        in_ptr = ctypes.create_string_buffer(in_bytes)
+
+    bytes_returned = wintypes.DWORD(0)
+    ok = DeviceIoControl(h, code, in_ptr, in_size, None, 0, ctypes.byref(bytes_returned), None)
+    if not ok:
+        # Non-fatal: driver may be uninstalled; log and return False
+        err = ctypes.windll.kernel32.GetLastError()
+        logger.debug(f"DeviceIoControl failed code=0x{code:08X} err={err}")
+        return False
+    return True
 
 
 # Track active target window for optional foreground-only enforcement

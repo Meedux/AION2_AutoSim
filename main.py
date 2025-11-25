@@ -11,7 +11,7 @@ from loguru import logger
 from utils import list_windows, get_window_rect
 from overlay import OverlayWindow
 from detection import DetectionController
-from input_controller import focus_window, set_active_hwnd
+from driver_input import focus_window, set_active_hwnd
 
 
 def is_admin():

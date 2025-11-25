@@ -12,7 +12,7 @@ import random
 from typing import Dict, Optional, List, Tuple
 from loguru import logger
 import skill_combo_config
-from input_controller import focus_window, tap_key, hold_key
+from driver_input import focus_window, tap_key, hold_key
 
 
 class SkillComboManager:
@@ -164,12 +164,12 @@ class SkillComboManager:
             elif modifier == 'alt':
                 # Alt + key combination
                 # Hold Alt, press key, release Alt
-                from input_controller import press_key_combination
+                from driver_input import press_key_combination
                 press_key_combination('alt', key)
                 logger.debug(f"Skill executed: Alt+{key}")
             elif modifier == 'ctrl':
                 # Ctrl + key combination
-                from input_controller import press_key_combination
+                from driver_input import press_key_combination
                 press_key_combination('ctrl', key)
                 logger.debug(f"Skill executed: Ctrl+{key}")
             else:

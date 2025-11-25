@@ -14,7 +14,7 @@ import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
-from input_controller import focus_window, double_click_at, tap_key, hold_key
+from driver_input import focus_window, double_click_at, tap_key, hold_key
 import skill_combo_config
 import random
 import stealth_config
@@ -80,6 +80,11 @@ class ActionPlanner:
         except Exception as e:
             logger.warning(f"Skill Combo Manager not available: {e}")
             self.skill_combo_manager = None
+        # Simplified combat flow state (new behavior)
+        self._in_combat = False
+        self._combat_until = 0.0
+        self._in_cooldown = False
+        self._cooldown_until = 0.0
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -324,7 +329,7 @@ class ActionPlanner:
                 logger.info(f"ActionPlanner: [ATTACK CLICK] mob at ({screen_x},{screen_y}), health={'yes' if health else 'no'}")
                 focus_window(self.hwnd)
                 try:
-                    from input_controller import perform_human_attack_click
+                    from driver_input import perform_human_attack_click
                     perform_human_attack_click(screen_x, screen_y)
                     time.sleep(stealth_config.get_post_click_delay())
                 except Exception as e:
@@ -334,7 +339,7 @@ class ActionPlanner:
                 logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill at ({screen_x},{screen_y})")
                 focus_window(self.hwnd)
                 try:
-                    from input_controller import click_at
+                    from driver_input import click_at
                     click_at(screen_x, screen_y)
                     time.sleep(stealth_config.get_post_click_delay())
                 except Exception as e:
@@ -355,7 +360,7 @@ class ActionPlanner:
                 if not success:
                     # Final fallback to attack click
                     try:
-                        from input_controller import perform_human_attack_click
+                        from driver_input import perform_human_attack_click
                         perform_human_attack_click(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
@@ -365,7 +370,7 @@ class ActionPlanner:
                 logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo at ({screen_x},{screen_y})")
                 focus_window(self.hwnd)
                 try:
-                    from input_controller import click_at
+                    from driver_input import click_at
                     click_at(screen_x, screen_y)
                     time.sleep(stealth_config.get_post_click_delay())
                 except Exception as e:
@@ -385,7 +390,7 @@ class ActionPlanner:
                 if not success:
                     # Final fallback
                     try:
-                        from input_controller import perform_human_attack_click
+                        from driver_input import perform_human_attack_click
                         perform_human_attack_click(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
@@ -419,7 +424,7 @@ class ActionPlanner:
                     logger.info(f"ActionPlanner: [ATTACK CLICK] locked target at ({screen_x},{screen_y})")
                     focus_window(self.hwnd)
                     try:
-                        from input_controller import perform_human_attack_click
+                        from driver_input import perform_human_attack_click
                         perform_human_attack_click(screen_x, screen_y)
                     except Exception as e:
                         logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")
@@ -427,7 +432,7 @@ class ActionPlanner:
                     logger.info(f"ActionPlanner: [SINGLE-CLICK] then single skill on locked target at ({screen_x},{screen_y})")
                     focus_window(self.hwnd)
                     try:
-                        from input_controller import click_at
+                        from driver_input import click_at
                         click_at(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
@@ -444,7 +449,7 @@ class ActionPlanner:
                             logger.error(f"Combo fallback error (locked): {e}")
                     if not success:
                         try:
-                            from input_controller import perform_human_attack_click
+                            from driver_input import perform_human_attack_click
                             perform_human_attack_click(screen_x, screen_y)
                         except Exception as e:
                             logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
@@ -452,7 +457,7 @@ class ActionPlanner:
                     logger.info(f"ActionPlanner: [SINGLE-CLICK] then combo on locked target at ({screen_x},{screen_y})")
                     focus_window(self.hwnd)
                     try:
-                        from input_controller import click_at
+                        from driver_input import click_at
                         click_at(screen_x, screen_y)
                         time.sleep(stealth_config.get_post_click_delay())
                     except Exception as e:
@@ -469,7 +474,7 @@ class ActionPlanner:
                             logger.error(f"Single skill fallback error (locked): {e}")
                     if not success:
                         try:
-                            from input_controller import perform_human_attack_click
+                            from driver_input import perform_human_attack_click
                             perform_human_attack_click(screen_x, screen_y)
                         except Exception as e:
                             logger.error(f"ActionPlanner: perform_human_attack_click failed (locked fallback): {e}")
@@ -477,7 +482,7 @@ class ActionPlanner:
                         logger.debug("Skill/combo failed on locked target, using attack click strategy")
                         focus_window(self.hwnd)
                         try:
-                            from input_controller import perform_human_attack_click
+                            from driver_input import perform_human_attack_click
                             perform_human_attack_click(screen_x, screen_y)
                         except Exception as e:
                             logger.error(f"ActionPlanner: perform_human_attack_click failed (locked): {e}")

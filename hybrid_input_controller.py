@@ -5,50 +5,23 @@ For AION, you can also run the AHK script manually for hardware-level inputs.
 """
 import time
 from loguru import logger
-from input_controller import tap_key as sendinput_tap_key
-from input_controller import move_mouse_to as sendinput_move_mouse
-from input_controller import click_at as sendinput_click_at
-from input_controller import double_click_at as sendinput_double_click_at
-from input_controller import focus_window
+from driver_input import tap_key as sendinput_tap_key
+from driver_input import move_mouse_to as sendinput_move_mouse
+from driver_input import click_at as sendinput_click_at
+from driver_input import double_click_at as sendinput_double_click_at
+from driver_input import focus_window
 
-# Try to import AHK controller (optional)
-try:
-    from ahk_controller import start_ahk_hardware_input, is_ahk_running
-    AHK_AVAILABLE = True
-except Exception as e:
-    logger.warning(f"AHK controller not available: {e}")
-    AHK_AVAILABLE = False
+AHK_AVAILABLE = False  # AutoHotkey removed — use KMDF driver only
 
 class HybridInputController:
     """Hybrid controller that uses both SendInput and AHK."""
     
-    def __init__(self, use_ahk_hardware=False):
-        """
-        Initialize the hybrid controller.
-        
-        Args:
-            use_ahk_hardware: If True, starts the AHK hardware script on init
-        """
-        self.use_sendinput = True  # Always use SendInput by default
+    def __init__(self):
+        """Hybrid facade — now simply forwards to the driver-backed input_controller."""
         self.ahk_enabled = False
-        
-        if use_ahk_hardware and AHK_AVAILABLE:
-            self.enable_ahk_hardware()
     
     def enable_ahk_hardware(self):
-        """Enable the AHK hardware input script."""
-        if not AHK_AVAILABLE:
-            logger.warning("AHK hardware input not available")
-            return False
-        
-        try:
-            if start_ahk_hardware_input():
-                self.ahk_enabled = True
-                logger.info("✓ AHK hardware input enabled")
-                return True
-        except Exception as e:
-            logger.error(f"Failed to enable AHK hardware: {e}")
-        
+        logger.warning("AHK support removed. KMDF driver is used for all input.")
         return False
     
     def tap_key(self, key: str, presses: int = 1, interval: float = 0.05):
@@ -101,16 +74,7 @@ if __name__ == "__main__":
     
     print("   ✓ SendInput working")
     
-    # Test AHK (optional)
-    if AHK_AVAILABLE:
-        print("\n2. Testing AHK Hardware Input...")
-        print("   - Starting AHK script...")
-        if controller.enable_ahk_hardware():
-            print("   ✓ AHK hardware script running")
-            print("   - You can now test with F9 (W key) or F10 (click)")
-            print("   - The AHK script runs independently")
-        else:
-            print("   ✗ AHK not available")
+    print("\nNote: AHK has been removed — driver-based input is used.")
     
     print("\n" + "="*60)
     print("  Test Complete!")
