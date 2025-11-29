@@ -1,10 +1,9 @@
 ﻿"""Action planner that maps detections to in-game actions.
 
 Behavior implemented per user spec:
- - When mobs detected the planner uses keyboard targeting: press `Tab` to lock the target and use `R`/`T` for light/heavy single-press attacks (no mouse double-clicks or drag-to-target).
- - After target acquisition the planner enters a COMBAT period (duration depends on target size & distance, minimum 5s). After combat there's a 5s cooldown where `F` is pressed randomly.
-- If no mobs present, find map navigation dots (heuristic: classes containing 'map'|'dot'|'red'|'enemy')
-  and move the player toward the nearest dot using W/A/S/D (W forward, S back, A/D turn).
+ - The planner ONLY reacts to detections with class `monster`.
+ - On detection the planner uses keyboard targeting: press `Tab` to lock the target and use `R`/`T` for light/heavy single-press attacks (no mouse double-clicks, no movement macros).
+ - After target acquisition the planner enters a COMBAT period (duration depends on target size & distance, minimum 5s) then a 5s cooldown where `F` is pressed randomly.
 
 This module uses `input_controller` to send OS-level inputs.
 
@@ -14,7 +13,7 @@ import time
 import threading
 from typing import List, Dict, Tuple, Optional
 from loguru import logger
-from input_controller import focus_window, tap_key, hold_key
+import input_controller as ic
 import skill_combo_config
 import random
 
@@ -62,11 +61,6 @@ class ActionPlanner:
         
         # Warmup/idle tracking removed (no stealth behavior)
         self._action_count = 0
-        
-        # Movement macro state (deterministic defaults)
-        self._current_movement_pattern = 'forward'
-        self._movement_pattern_start = 0.0
-        self._movement_pattern_duration = 2.0
         
         # Skill Combo Manager - handles skill macros with cooldown tracking
         try:
@@ -154,12 +148,16 @@ class ActionPlanner:
                 candidates.append(d)
         return candidates
 
-    def _find_all_mobs(self, detections: List[Dict]) -> List[Dict]:
-        """Return all detections that look like mobs (class contains 'mob' except 'mob_combat_health')."""
+    def _find_all_monsters(self, detections: List[Dict]) -> List[Dict]:
+        """Return all detections that match the 'monster' class using the new model.
+
+        The updated model only outputs detections with class 'monster' for enemies.
+        """
         out = []
         for d in detections:
             name = str(d.get('class', '')).lower()
-            if 'mob' in name and 'mob_combat_health' not in name:
+            # New model uses exact class 'monster'
+            if name == 'monster':
                 try:
                     if float(d.get('confidence', 0.0)) >= self.conf_thresh:
                         out.append(d)
@@ -227,65 +225,7 @@ class ActionPlanner:
         
         return north_dots if north_dots else map_dots
     
-    def _execute_movement_macro(self, pattern: str, duration: float):
-        """
-        Execute a randomized movement pattern.
-        Patterns: forward, forward_zigzag, circle_left, circle_right, backup_turn, strafe_left, strafe_right
-        """
-        logger.info(f"Movement macro: {pattern} for {duration:.2f}s")
-        focus_window(self.hwnd)
-        
-        if pattern == "forward":
-            tap_key('w')
-            time.sleep(duration)
-        
-        elif pattern == "forward_zigzag":
-            # Forward with slight left/right adjustments
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                tap_key('w')
-                time.sleep(0.3)
-                if random.random() < 0.5:
-                    tap_key('a')
-                else:
-                    tap_key('d')
-                time.sleep(0.1)
-        
-        elif pattern == "circle_left":
-            # Strafe left while moving forward
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                tap_key('w')
-                tap_key('a')
-                time.sleep(0.2)
-        
-        elif pattern == "circle_right":
-            # Strafe right while moving forward
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                tap_key('w')
-                tap_key('d')
-                time.sleep(0.2)
-        
-        elif pattern == "backup_turn":
-            # Backup and turn
-            tap_key('s')
-            time.sleep(duration * 0.5)
-            if random.random() < 0.5:
-                tap_key('a')
-            else:
-                tap_key('d')
-            time.sleep(duration * 0.5)
-        
-        elif pattern == "strafe_left":
-            tap_key('a')
-            time.sleep(duration)
-        
-        elif pattern == "strafe_right":
-            tap_key('d')
-            time.sleep(duration)
-        
-        time.sleep(0.05)
+    # Movement macros removed — this planner focuses on scanning -> combat -> cooldown.
 
     def plan_and_execute(self, detections: List[Dict], window_rect: Tuple[int, int, int, int]):
         """detections are in target (window) pixel coords; window_rect is (left, top, w, h)
@@ -314,8 +254,8 @@ class ActionPlanner:
                 # schedule random F presses during cooldown
                 if time.time() - self._last_cooldown_action >= random.uniform(*self._cooldown_f_interval):
                     try:
-                        focus_window(self.hwnd)
-                        tap_key('f')
+                        ic.focus_window(self.hwnd)
+                        ic.tap_key('f')
                         self._last_cooldown_action = time.time()
                         logger.info("ActionPlanner(COOLDOWN): pressed 'F' during cooldown")
                     except Exception as e:
@@ -327,8 +267,8 @@ class ActionPlanner:
                 self._current_target = None
                 logger.info("ActionPlanner: cooldown finished, back to scanning")
 
-        # 1) New MOB targeting + combat state-machine
-        mobs = self._find_all_mobs(detections)
+        # 1) New MONSTER targeting + combat state-machine
+        mobs = self._find_all_monsters(detections)
 
         # SCANNING: detect mobs and acquire a target
         if self._mode == 'scanning':
@@ -348,14 +288,16 @@ class ActionPlanner:
 
                 # Acquire target: press tab to lock-on and then trigger an attack (R or T)
                 try:
-                    focus_window(self.hwnd)
+                    ic.focus_window(self.hwnd)
                     # Press Tab to target (one press)
-                    tap_key('tab')
+                    ic.tap_key('tab')
+                    ic.tap_key('tab')
                     # small human-like delay
                     time.sleep(random.uniform(0.08, 0.20))
                     # press either 'r' or 't' once
                     atk = random.choice(['r', 't'])
-                    tap_key(atk)
+                    ic.tap_key(atk)
+                    ic.tap_key(atk)
                     logger.info(f"ActionPlanner: target acquired via TAB and initial attack '{atk.upper()}'")
                 except Exception as e:
                     logger.error(f"ActionPlanner: initial target/attack failed: {e}")
@@ -374,10 +316,10 @@ class ActionPlanner:
             if time.time() < self._combat_until:
                 # Attack cadence - do R or T single presses
                 if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
-                    focus_window(self.hwnd)
+                    ic.focus_window(self.hwnd)
                     try:
                         atk = random.choice(['r', 't'])
-                        tap_key(atk)
+                        ic.tap_key(atk)
                         self._last_attack = time.time()
                         logger.info(f"ActionPlanner(COMBAT): pressed '{atk.upper()}' (single) against target")
                     except Exception as e:
@@ -391,7 +333,7 @@ class ActionPlanner:
                 logger.info("ActionPlanner: combat finished, entering 5s cooldown (F spam)")
                 return
 
-        # If we had a locked target (we were attacking), but now no mob target found,
+        # If we had a locked target (we were attacking), but now no monster target found,
         # check if health still present for locked target; if so, try to click its last pos
         if self._current_target is not None:
             # check health across detections for any mob_combat_health overlapping previous lock
@@ -402,10 +344,10 @@ class ActionPlanner:
                 screen_y = int(top + ty)
                 # If health remains, stay engaged — press a small attack (R/T) occasionally
                 if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
-                    focus_window(self.hwnd)
+                    ic.focus_window(self.hwnd)
                     try:
                         atk = random.choice(['r', 't'])
-                        tap_key(atk)
+                        ic.tap_key(atk)
                         self._last_attack = time.time()
                         logger.info(f"ActionPlanner: locked target attack '{atk.upper()}'")
                     except Exception as e:
@@ -416,114 +358,8 @@ class ActionPlanner:
                 logger.info("ActionPlanner: target appears dead, clearing lock")
                 self._current_target = None
 
-        # 2) No mobs: navigate using map dots (minimap red dots)
-        dots = self._find_map_dots(detections)
-        if len(dots) == 0:
-                # No map dots - use movement macro to explore
-            now = time.time()
-            if (now - self._movement_pattern_start > self._movement_pattern_duration):
-                self._current_movement_pattern = 'forward'
-                self._movement_pattern_duration = 2.0
-                self._movement_pattern_start = now
-            
-            self._execute_movement_macro(
-                self._current_movement_pattern,
-                min(2.0, self._movement_pattern_duration)  # Max 2s per execution
-            )
+        # 2) No monsters detected: do nothing (movement macros removed)
+        # The planner will wait in scanning mode until a monster appears.
+        if not mobs:
             return
-        
-        # Filter dots to find those in "north" direction (where player is facing)
-        north_dots = self._find_north_map_dots(dots, w, h)
-        if not north_dots:
-            north_dots = dots  # Fallback
-        
-        # Choose nearest dot to center from north dots
-        cx = w / 2.0
-        cy = h / 2.0
-        best = None
-        best_dist = None
-        for d in north_dots:
-            dx = (d.get("x", 0) + d.get("width", 0)/2.0) - cx
-            dy = (d.get("y", 0) + d.get("height", 0)/2.0) - cy
-            dist = (dx*dx + dy*dy)**0.5
-            if best is None or dist < best_dist:
-                best = d
-                best_dist = dist
-
-        if best is None:
-            return
-
-        tx, ty = _center_of(best)
-        ndx = (tx - cx) / max(1.0, cx)  # -1..1
-        ndy = (ty - cy) / max(1.0, cy)
-        
-        # Wider turn threshold for 70-degree turns
-        turn_thr_70deg = 0.30  # Requires more offset for 70-degree turn
-        turn_thr_small = 0.15  # Small adjustments
-        forward_thr = 0.12
-
-        # Ensure the game window has focus before sending movement keys
-        focus_window(self.hwnd)
-        
-        # Check if we need a 70-degree turn (large offset)
-        if abs(ndx) > turn_thr_70deg:
-            # Big turn (70 degrees) - HOLD the key down for the full duration
-            hold_duration = 1.2
-            if ndx > 0:
-                logger.info(f"ActionPlanner: BIG TURN right (D) ~70° HOLDING for {hold_duration:.2f}s")
-                focus_window(self.hwnd)
-                try:
-                    hold_key('d', hold_duration)  # HOLD key for 70-degree turn
-                    time.sleep(0.05)
-                except Exception as e:
-                    logger.error(f"ActionPlanner: hold_key D failed: {e}")
-            else:
-                logger.info(f"ActionPlanner: BIG TURN left (A) ~70° HOLDING for {hold_duration:.2f}s")
-                focus_window(self.hwnd)
-                try:
-                    hold_key('a', hold_duration)  # HOLD key for 70-degree turn
-                    time.sleep(0.05)
-                except Exception as e:
-                    logger.error(f"ActionPlanner: hold_key A failed: {e}")
-        elif abs(ndx) > turn_thr_small:
-            # Small turn adjustment - also HOLD for duration
-            hold_duration = 0.6
-            if ndx > 0:
-                logger.info(f"ActionPlanner: turning right (D) HOLDING for {hold_duration:.2f}s")
-                focus_window(self.hwnd)
-                try:
-                    hold_key('d', hold_duration)  # HOLD key for small turn
-                    time.sleep(0.05)
-                except Exception as e:
-                    logger.error(f"ActionPlanner: hold_key D failed: {e}")
-            else:
-                logger.info(f"ActionPlanner: turning left (A) HOLDING for {hold_duration:.2f}s")
-                focus_window(self.hwnd)
-                try:
-                    hold_key('a', hold_duration)  # HOLD key for small turn
-                    time.sleep(0.05)
-                except Exception as e:
-                    logger.error(f"ActionPlanner: hold_key A failed: {e}")
-        else:
-            # face roughly toward target; move forward/back depending on vertical
-            if ndy < -forward_thr:
-                # target is above center -> move forward
-                hold_duration = 0.6
-                logger.info(f"ActionPlanner: moving forward (W) for {hold_duration:.2f}s")
-                focus_window(self.hwnd)  # Ensure focused before input
-                try:
-                    tap_key('w')
-                    time.sleep(hold_duration)  # Hold the key
-                    time.sleep(0.05)  # Post-movement delay
-                except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key W failed: {e}")
-            elif ndy > forward_thr:
-                hold_duration = 0.6
-                logger.info(f"ActionPlanner: moving backward (S) for {hold_duration:.2f}s")
-                focus_window(self.hwnd)  # Ensure focused before input
-                try:
-                    tap_key('s')
-                    time.sleep(hold_duration)  # Hold the key
-                    time.sleep(0.05)  # Post-movement delay
-                except Exception as e:
-                    logger.error(f"ActionPlanner: tap_key S failed: {e}")
+        # No movement macros — when no monsters are detected, remain idle in scanning mode.

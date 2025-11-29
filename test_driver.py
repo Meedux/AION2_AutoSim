@@ -1,11 +1,8 @@
-"""Quick smoke test for user-mode input functions.
+"""Quick smoke test for input functions.
 
 This tests the high-level input API (tap_key, hold_key, move_mouse_to, click_at)
-to make sure the pydirectinput-backed implementation operates without raising.
-
-This isn't a functional end-to-end verification with the game (can't assert
-the game's reaction here). The tests ensure the input functions execute and
-don't raise exceptions on your test machine.
+to ensure the implementation executes without raising exceptions. This is a
+local smoke test and not a functional verification with a running game.
 """
 
 import time

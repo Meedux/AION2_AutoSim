@@ -7,7 +7,7 @@ AI-powered automation for AION with **advanced skill combo macros**, configurabl
 - 🎯 **Skill Combo Macro System** - 36 configurable keybinds with individual cooldown tracking
 - 🎲 **Attack Mode** - Randomizes between standard Tab-target attacks, single skills, and combo sets
 - 🖱️ **Smart Clicking** - Clicks lower part of detection boxes, nearest mob targeting
-- ⌨️ **User-mode Input (pydirectinput)** - Uses `pydirectinput` (PyAutoGUI-backed) for input simulation
+- ⌨️ **Interception (kernel driver)** - Hardware-level input using the Interception driver and DLL (required)
 - 🔄 **Smooth Mouse Movement** - Bezier curve dragging (no teleport)
 - 🎮 **70° Turns** - Proper key holding for wide angle turns
 - 🗺️ **Minimap Navigation** - Red dot detection and pathfinding
@@ -32,10 +32,9 @@ AI-powered automation for AION with **advanced skill combo macros**, configurabl
 
 ## 🔧 Requirements
 
-- **Windows 10/11**
-- **Python 3.8+**
-- **Administrator privileges** (required for hardware-level input)
-*Optional:* AutoHotkey (only required if you want to run older AHK scripts manually)
+-- **Windows 10/11**
+-- **Python 3.8+**
+-- **Administrator privileges** (required for hardware-level input)
 
 ## 📦 Installation
 
@@ -181,7 +180,7 @@ validate behavior interactively.
 
 ## Input timing and attack modes
 
-The project provides configurable attack modes and reasonable default input timings. The application uses `pydirectinput` for input simulation and offers configurable combo and skill execution behavior.
+The project provides configurable attack modes and reasonable default input timings. The application requires the Interception kernel driver / DLL for reliable hardware-level input simulation and offers configurable combo and skill execution behavior.
 
 ---
 
@@ -189,15 +188,11 @@ The project provides configurable attack modes and reasonable default input timi
 
 ### Input Methods
 
-**Primary: pydirectinput (PyDirectInput / PyAutoGUI-backed)**
-This project now uses `pydirectinput` (a PyAutoGUI-derived library) as the primary
-user-mode input driver. It's simpler to install and works cross-compatibly on Windows.
-
-- ✅ No kernel driver required
-- ✅ Works well for most automation/testing scenarios
-
-*Legacy:* AutoHotkey hardware-level option is no longer used by default. The
-project now favors `pydirectinput` for a simpler, driver-free test experience.
+**Primary: Interception (kernel driver)**
+This project requires the Interception kernel driver and its `interception.dll` as the
+sole supported input backend. The application no longer includes fallbacks to
+user-mode input libraries or AutoHotkey; Interception must be installed and the
+DLL must match your Python bitness.
 
 ### AI Object Detection
 
@@ -361,16 +356,6 @@ project now favors `pydirectinput` for a simpler, driver-free test experience.
 
 ---
 
-### AutoHotkey Not Working
-
-**Symptoms**: Skills with Alt/Ctrl not pressing
-
-**Solutions**:
-1. **Run as Administrator** (required for hardware input)
-2. Check AutoHotkey installed: `pip install ahk`
-3. Fallback to pydirectinput: Edit `input_controller.py` and remove AutoHotkey dependency
-4. Verify game accepts modifier keys (some games block Alt+/Ctrl+)
-
 ---
 
 ### Combo Sets Not Executing
@@ -415,9 +400,8 @@ This project is for educational purposes only. Use at your own risk.
 ## 🙏 Credits
 
 - **YOLOv8**: Ultralytics object detection
-- **AutoHotkey**: Hardware-level input simulation
+- **Interception**: Hardware-level input driver/DLL (required)
 - **PySide6**: Modern GUI framework
-- **PyAutoGUI**: Fallback input method
 
 ---
 

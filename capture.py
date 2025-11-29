@@ -63,7 +63,7 @@ class CaptureWorker(threading.Thread):
                     frame = cv2.resize(frame, (int(w0 * scale), int(h0 * scale)), interpolation=cv2.INTER_AREA)
             with self._lock:
                 self.latest_frame = frame
-            time.sleep(interval)
+            # time.sleep(interval)
 
     def get_window_size(self):
         """Return the last known original window (width, height)."""

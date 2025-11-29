@@ -202,6 +202,20 @@ class SkillComboManager:
         logger.info(f"Executing combo: {combo_name} ({len(skills)} skills)")
         
         try:
+            # Optional pre-macro focus + delay
+            # Combo-level `pre_focus` overrides global `PRE_MACRO_FOCUS_ENABLED`.
+            pre_focus = combo.get('pre_focus', None)
+            if pre_focus is None:
+                pre_focus = skill_combo_config.PRE_MACRO_FOCUS_ENABLED
+
+            if pre_focus:
+                pre_delay = combo.get('pre_focus_delay', skill_combo_config.PRE_MACRO_FOCUS_DELAY)
+                randomized_pre_delay = skill_combo_config.get_randomized_delay(pre_delay)
+                logger.debug(f"Pre-focus enabled for combo '{combo_name}': focusing window and waiting {randomized_pre_delay:.2f}s")
+                # Focus the game window then wait before starting the combo
+                focus_window(self.hwnd)
+                time.sleep(randomized_pre_delay)
+
             for idx, skill in enumerate(skills):
                 # Execute the skill
                 if not self.execute_skill(skill):

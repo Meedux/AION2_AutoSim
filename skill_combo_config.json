@@ -1,0 +1,100 @@
+{
+  "SKILL_COOLDOWNS": {
+    "1": 10.0,
+    "2": 12.0,
+    "3": 15.0,
+    "4": 8.0,
+    "5": 20.0,
+    "6": 18.0,
+    "7": 25.0,
+    "8": 30.0,
+    "9": 15.0,
+    "0": 10.0,
+    "-": 45.0,
+    "=": 60.0,
+    "alt+1": 10.0,
+    "alt+2": 12.0,
+    "alt+3": 15.0,
+    "alt+4": 8.0,
+    "alt+5": 20.0,
+    "alt+6": 18.0,
+    "alt+7": 25.0,
+    "alt+8": 30.0,
+    "alt+9": 15.0,
+    "alt+0": 10.0,
+    "alt+-": 45.0,
+    "alt+=": 60.0,
+    "ctrl+1": 10.0,
+    "ctrl+2": 12.0,
+    "ctrl+3": 15.0,
+    "ctrl+4": 8.0,
+    "ctrl+5": 20.0,
+    "ctrl+6": 18.0,
+    "ctrl+7": 25.0,
+    "ctrl+8": 30.0,
+    "ctrl+9": 15.0,
+    "ctrl+0": 10.0,
+    "ctrl+-": 45.0,
+    "ctrl+=": 60.0
+  },
+  "COMBO_SETS": [
+    {
+      "name": "Basic DPS Rotation",
+      "skills": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "cooldown": 60.0,
+      "delay_between_skills": 0.5,
+      "enabled": true
+    },
+    {
+      "name": "Buff Combo",
+      "skills": [
+        "alt+1",
+        "alt+2",
+        "alt+3"
+      ],
+      "cooldown": 120.0,
+      "delay_between_skills": 0.8,
+      "enabled": true
+    },
+    {
+      "name": "Ultimate Combo",
+      "skills": [
+        "ctrl+1",
+        "5",
+        "6",
+        "7",
+        "ctrl+2"
+      ],
+      "cooldown": 180.0,
+      "delay_between_skills": 1.0,
+      "enabled": true
+    }
+  ],
+  "DELAY_RANDOMIZATION": 0.15,
+  "SKILL_COMBO_ENABLED": true,
+  "PRE_MACRO_FOCUS_ENABLED": false,
+  "PRE_MACRO_FOCUS_DELAY": 0.25,
+  "INPUT_BACKEND": "interception",
+  "INPUT_DRY_RUN": false,
+  "COMBO_PRIORITY": null,
+  "STEALTH_ATTACK_MODE_ENABLED": true,
+  "ATTACK_MODE_WEIGHTS": {
+    "standard_attack": 0.5,
+    "single_skill": 0.3,
+    "combo_set": 0.2
+  },
+  "REQUIRE_MOB_HEALTH_FOR_SKILLS": false,
+  "SINGLE_SKILL_POOL": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5"
+  ],
+  "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5
+}

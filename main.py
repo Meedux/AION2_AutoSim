@@ -11,7 +11,7 @@ from loguru import logger
 from utils import list_windows, get_window_rect
 from overlay import OverlayWindow
 from detection import DetectionController
-from input_controller import focus_window, set_active_hwnd
+import input_controller as ic
 
 
 def is_admin():
@@ -72,11 +72,43 @@ class MainWindow(QtWidgets.QMainWindow):
         info.setWordWrap(True)
         form.addRow("Settings:", info)
 
-        # Simulate mode checkbox
+        # Input backend controls (UI toggle)
+        backend_layout = QtWidgets.QHBoxLayout()
+        self.backend_combo = QtWidgets.QComboBox()
+        # Available backends (interception-only build)
+        self.backend_combo.addItems(['interception'])
+        # Use stored config if present, otherwise reflect runtime value
+        try:
+            import skill_combo_config as scc
+            initial_backend = getattr(scc, 'INPUT_BACKEND', ic.INPUT_BACKEND)
+        except Exception:
+            initial_backend = ic.INPUT_BACKEND
+        idx = self.backend_combo.findText(initial_backend)
+        if idx >= 0:
+            self.backend_combo.setCurrentIndex(idx)
+        self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
+
         self.simulate_cb = QtWidgets.QCheckBox("Simulate mode (log only, no real inputs)")
-        self.simulate_cb.setChecked(False)
-        self.simulate_cb.hide()  # Hide simulate mode - user wants real implementation
-        form.addRow("Mode:", self.simulate_cb)
+        try:
+            initial_dry = getattr(scc, 'INPUT_DRY_RUN', ic.INPUT_DRY_RUN)
+        except Exception:
+            initial_dry = ic.INPUT_DRY_RUN
+        self.simulate_cb.setChecked(bool(initial_dry))
+        self.simulate_cb.toggled.connect(self._on_dry_run_toggled)
+
+        # Small status indicator for backend availability
+        self.backend_status = QtWidgets.QLabel("")
+        self.backend_status.setFixedWidth(140)
+        backend_layout.addWidget(self.backend_combo)
+        backend_layout.addWidget(self.backend_status)
+        backend_layout.addWidget(self.simulate_cb)
+        form.addRow("Input backend:", backend_layout)
+
+        # initialize backend status indicator
+        try:
+            self._update_backend_status(initial_backend)
+        except Exception:
+            pass
 
         layout.addLayout(form)
 
@@ -254,6 +286,23 @@ class MainWindow(QtWidgets.QMainWindow):
                 else:
                     new_lines.append(line)
             
+            # Also ensure INPUT_BACKEND / INPUT_DRY_RUN entries are updated
+            backend_written = False
+            dry_written = False
+            for i, line in enumerate(new_lines):
+                if 'INPUT_BACKEND = ' in line and not line.strip().startswith('#'):
+                    new_lines[i] = f"INPUT_BACKEND = '{ic.INPUT_BACKEND}'\n"
+                    backend_written = True
+                if 'INPUT_DRY_RUN = ' in line and not line.strip().startswith('#'):
+                    new_lines[i] = f"INPUT_DRY_RUN = {ic.INPUT_DRY_RUN}\n"
+                    dry_written = True
+
+            if not backend_written:
+                new_lines.append('\n# Input backend (interception)\n')
+                new_lines.append(f"INPUT_BACKEND = '{ic.INPUT_BACKEND}'\n")
+            if not dry_written:
+                new_lines.append(f"INPUT_DRY_RUN = {ic.INPUT_DRY_RUN}\n")
+
             # Write back to file
             with open(config_path, 'w', encoding='utf-8') as f:
                 f.writelines(new_lines)
@@ -262,6 +311,70 @@ class MainWindow(QtWidgets.QMainWindow):
             
         except Exception as e:
             logger.error(f"Failed to save main configuration to file: {e}")
+
+    def _on_backend_changed(self, backend: str):
+        """User changed the input backend from the UI dropdown."""
+        try:
+            # Validate availability and persist via JSON-backed config
+            try:
+                import skill_combo_config as scc
+                # Validate backend and show a dialog if unavailable
+                try:
+                    ic.validate_backend(backend)
+                    scc.update_config({'INPUT_BACKEND': backend})
+                    ic.INPUT_BACKEND = backend
+                    self.log(f"Input backend set to: {backend}")
+                except RuntimeError as ve:
+                    # Persist selection so UI reflects user's choice, but inform the user
+                    try:
+                        scc.update_config({'INPUT_BACKEND': backend})
+                    except Exception:
+                        pass
+                    ic.INPUT_BACKEND = backend
+                    QtWidgets.QMessageBox.warning(self, 'Backend Unavailable', f"Selected backend '{backend}' appears unavailable:\n\n{ve}")
+                    self.log(f"Selected backend '{backend}' may be unavailable: {ve}")
+            except Exception:
+                # Fallback: set module var and try to save main config
+                ic.INPUT_BACKEND = backend
+                self._save_main_config_to_file()
+                self.log(f"Input backend set to: {backend}")
+            # update status indicator after attempting to set backend
+            try:
+                self._update_backend_status(backend)
+            except Exception:
+                pass
+        except Exception as e:
+            self.log(f"Failed to set input backend: {e}")
+
+    def _on_dry_run_toggled(self, enabled: bool):
+        """User toggled DRY_RUN simulate mode in the UI."""
+        try:
+            ic.INPUT_DRY_RUN = bool(enabled)
+            try:
+                import skill_combo_config as scc
+                scc.update_config({'INPUT_DRY_RUN': bool(enabled)})
+            except Exception:
+                # fall back to saving main config file
+                self._save_main_config_to_file()
+            self.log(f"Simulate mode (DRY_RUN) set to: {bool(enabled)}")
+        except Exception as e:
+            self.log(f"Failed to toggle simulate mode: {e}")
+    
+    def _update_backend_status(self, backend: str):
+        """Update the small status label next to the backend selector."""
+        try:
+            ic.validate_backend(backend)
+            self.backend_status.setText('Available')
+            self.backend_status.setStyleSheet('color: green; font-weight: bold;')
+            self.backend_status.setToolTip(f"Backend '{backend}' is available")
+        except RuntimeError as e:
+            self.backend_status.setText('Unavailable')
+            self.backend_status.setStyleSheet('color: red; font-weight: bold;')
+            self.backend_status.setToolTip(str(e))
+        except Exception:
+            self.backend_status.setText('Unknown')
+            self.backend_status.setStyleSheet('color: orange;')
+            self.backend_status.setToolTip('Unable to determine backend status')
     
     def _open_skill_config(self):
         """Open skill configuration file in default editor."""
@@ -294,7 +407,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         hwnd = self.win_combo.currentData()
         try:
-            set_active_hwnd(hwnd)
+            ic.set_active_hwnd(hwnd)
         except Exception:
             pass
         rect = get_window_rect(hwnd)
@@ -316,7 +429,10 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self._controller.start()
         # Focus the game window immediately when starting
-        focus_window(hwnd)
+        # try:
+        #     ic.focus_window(hwnd)
+        # except Exception:
+        #     pass
         # start periodic overlay repositioning to follow the target window
         self._pos_timer.start()
         self.start_btn.setEnabled(False)
@@ -1129,8 +1245,8 @@ def run_app():
     """Main application entry point."""
     app = QtWidgets.QApplication(sys.argv)
     
-    # AutoHotkey handles everything automatically - no driver installation needed!
-    logger.info("✓ AutoHotkey ready for input control")
+    # Interception is the required backend for input control
+    logger.info("Interception backend enforced; ensure interception driver is installed")
     
     win = MainWindow()
     win.show()
@@ -1138,7 +1254,7 @@ def run_app():
 
 
 if __name__ == "__main__":
-    logger.info("Starting AION automation with AutoHotkey input control...")
+    logger.info("Starting AION automation (Interception backend)")
     # REQUIRE administrator privileges - do not run without admin
     try:
         if not is_admin():
