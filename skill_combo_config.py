@@ -39,30 +39,15 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "0": 10.0,
         "-": 45.0,
         "=": 60.0,
-        "alt+1": 10.0,
-        "alt+2": 12.0,
-        "alt+3": 15.0,
-        "alt+4": 8.0,
-        "alt+5": 20.0,
-        "alt+6": 18.0,
-        "alt+7": 25.0,
-        "alt+8": 30.0,
-        "alt+9": 15.0,
-        "alt+0": 10.0,
-        "alt+-": 45.0,
-        "alt+=": 60.0,
-        "ctrl+1": 10.0,
-        "ctrl+2": 12.0,
-        "ctrl+3": 15.0,
-        "ctrl+4": 8.0,
-        "ctrl+5": 20.0,
-        "ctrl+6": 18.0,
-        "ctrl+7": 25.0,
-        "ctrl+8": 30.0,
-        "ctrl+9": 15.0,
-        "ctrl+0": 10.0,
-        "ctrl+-": 45.0,
-        "ctrl+=": 60.0,
+        "f1": 10.0,
+        "f2": 12.0,
+        "f3": 15.0,
+        "f4": 8.0,
+        "f5": 20.0,
+        "f6": 18.0,
+        "f7": 25.0,
+        "f8": 30.0,
+        "f9": 15.0,
     },
     "COMBO_SETS": [
         {
@@ -74,14 +59,14 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         },
         {
             "name": "Buff Combo",
-            "skills": ["alt+1", "alt+2", "alt+3"],
+            "skills": ["f1", "f2", "f3"],
             "cooldown": 120.0,
             "delay_between_skills": 0.8,
             "enabled": True,
         },
         {
             "name": "Ultimate Combo",
-            "skills": ["ctrl+1", "5", "6", "7", "ctrl+2"],
+            "skills": ["f4", "5", "6", "7", "f5"],
             "cooldown": 180.0,
             "delay_between_skills": 1.0,
             "enabled": True,
@@ -103,6 +88,13 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     "REQUIRE_MOB_HEALTH_FOR_SKILLS": False,
     "SINGLE_SKILL_POOL": ["1", "2", "3", "4", "5"],
     "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5,
+    # When true, during combat the planner may use skills and combo sets
+    # according to the attack mode weights. This allows mixing R/T with
+    # configured skills and combo sets while in combat.
+    "COMBAT_USE_SKILLS": True,
+    # When true, the planner will perform idle roaming: move forward and look around
+    # when no monsters are detected. Toggleable in the UI.
+    "ENABLE_ROAM": True,
 }
 
 
@@ -141,8 +133,39 @@ def _refresh_module_vars() -> None:
     global COMBO_PRIORITY, STEALTH_ATTACK_MODE_ENABLED, ATTACK_MODE_WEIGHTS
     global REQUIRE_MOB_HEALTH_FOR_SKILLS, SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
 
-    SKILL_COOLDOWNS = _config.get('SKILL_COOLDOWNS', {})
-    COMBO_SETS = _config.get('COMBO_SETS', [])
+    # Normalize skill keys: strip any leading 'alt+' or 'ctrl+' and normalize to lowercase
+    raw_skills = _config.get('SKILL_COOLDOWNS', {}) or {}
+    normalized = {}
+    for k, v in raw_skills.items():
+        kn = str(k).lower().strip()
+        if kn.startswith('alt+'):
+            kn = kn.replace('alt+', '', 1)
+        if kn.startswith('ctrl+'):
+            kn = kn.replace('ctrl+', '', 1)
+        normalized[kn] = v
+    SKILL_COOLDOWNS = normalized
+    # Normalize combo skill lists as well (strip modifiers)
+    raw_combos = _config.get('COMBO_SETS', []) or []
+    def _normalize_skill(s: str) -> str:
+        if not isinstance(s, str):
+            return s
+        s2 = s.lower().strip()
+        if s2.startswith('alt+'):
+            s2 = s2.replace('alt+', '', 1)
+        if s2.startswith('ctrl+'):
+            s2 = s2.replace('ctrl+', '', 1)
+        return s2
+
+    COMBO_SETS = []
+    for combo in raw_combos:
+        try:
+            c = dict(combo)
+            if 'skills' in c and isinstance(c['skills'], list):
+                c['skills'] = [_normalize_skill(s) for s in c['skills']]
+            COMBO_SETS.append(c)
+        except Exception:
+            # fallback to original
+            COMBO_SETS.append(combo)
     DELAY_RANDOMIZATION = float(_config.get('DELAY_RANDOMIZATION', 0.15))
     SKILL_COMBO_ENABLED = bool(_config.get('SKILL_COMBO_ENABLED', True))
     PRE_MACRO_FOCUS_ENABLED = bool(_config.get('PRE_MACRO_FOCUS_ENABLED', False))
@@ -155,6 +178,8 @@ def _refresh_module_vars() -> None:
     REQUIRE_MOB_HEALTH_FOR_SKILLS = bool(_config.get('REQUIRE_MOB_HEALTH_FOR_SKILLS', False))
     SINGLE_SKILL_POOL = _config.get('SINGLE_SKILL_POOL', [])
     SINGLE_SKILL_GLOBAL_COOLDOWN = float(_config.get('SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5))
+    COMBAT_USE_SKILLS = bool(_config.get('COMBAT_USE_SKILLS', True))
+    ENABLE_ROAM = bool(_config.get('ENABLE_ROAM', True))
 
 
 _refresh_module_vars()
@@ -236,11 +261,13 @@ def validate_combo_set(combo: Dict[str, Any]) -> Tuple[bool, str]:
 
 
 def parse_skill_keybind(skill: str) -> Tuple[Optional[str], str]:
+    # Normalize and strip modifiers. Modifiers are not supported for skills anymore;
+    # if present they will be ignored and the base key returned.
     skill_lower = skill.lower().strip()
-    if 'alt+' in skill_lower:
-        return 'alt', skill_lower.replace('alt+', '')
-    if 'ctrl+' in skill_lower:
-        return 'ctrl', skill_lower.replace('ctrl+', '')
+    if skill_lower.startswith('alt+'):
+        skill_lower = skill_lower.replace('alt+', '', 1)
+    if skill_lower.startswith('ctrl+'):
+        skill_lower = skill_lower.replace('ctrl+', '', 1)
     return None, skill_lower
 
 

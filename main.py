@@ -161,6 +161,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.require_health_cb.setChecked(skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS)
         self.require_health_cb.stateChanged.connect(self._update_skill_config)
         skill_layout.addWidget(self.require_health_cb)
+
+        # Combat skills & combos toggle
+        self.combat_skills_cb = QtWidgets.QCheckBox("Enable skills & combos during combat")
+        # New config key: COMBAT_USE_SKILLS
+        self.combat_skills_cb.setChecked(getattr(skill_combo_config, 'COMBAT_USE_SKILLS', True))
+        self.combat_skills_cb.stateChanged.connect(self._update_skill_config)
+        skill_layout.addWidget(self.combat_skills_cb)
         
         # Configuration buttons in a horizontal layout
         config_buttons_layout = QtWidgets.QHBoxLayout()
@@ -181,6 +188,8 @@ class MainWindow(QtWidgets.QMainWindow):
         
         skill_group.setLayout(skill_layout)
         layout.addWidget(skill_group)
+        # Cooldown monitor panel
+        self._setup_cooldown_panel(layout)
 
         # Anti-detection GUI removed (no stealth_config support)
 
@@ -222,6 +231,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._refresh_windows()
 
+    def _setup_cooldown_panel(self, parent_layout):
+        """Create a small panel showing skill/combo cooldowns."""
+        cooldown_group = QtWidgets.QGroupBox("Cooldown Monitor")
+        v = QtWidgets.QVBoxLayout()
+
+        # Skills table
+        self._skills_table = QtWidgets.QTableWidget(0, 2)
+        self._skills_table.setHorizontalHeaderLabels(["Skill", "Remaining(s)"])
+        self._skills_table.horizontalHeader().setStretchLastSection(True)
+        v.addWidget(self._skills_table)
+
+        # Combos table
+        self._combos_table = QtWidgets.QTableWidget(0, 2)
+        self._combos_table.setHorizontalHeaderLabels(["Combo", "Status"])
+        self._combos_table.horizontalHeader().setStretchLastSection(True)
+        v.addWidget(self._combos_table)
+
+        cooldown_group.setLayout(v)
+        parent_layout.addWidget(cooldown_group)
+
+        # Timer to refresh cooldowns periodically
+        self._cooldown_timer = QtCore.QTimer(self)
+        self._cooldown_timer.setInterval(500)
+        self._cooldown_timer.timeout.connect(self._refresh_cooldown_panel)
+
     def log(self, text: str):
         # append thread-safely
         QtCore.QMetaObject.invokeMethod(self.log_view, "appendPlainText", QtCore.Qt.QueuedConnection, QtCore.Q_ARG(str, text))
@@ -233,6 +267,8 @@ class MainWindow(QtWidgets.QMainWindow):
             
             # Update stealth attack mode
             skill_combo_config.STEALTH_ATTACK_MODE_ENABLED = self.stealth_attack_cb.isChecked()
+            # Update combat skill usage toggle
+            skill_combo_config.COMBAT_USE_SKILLS = self.combat_skills_cb.isChecked()
             
             # Update attack mode weights
             skill_combo_config.ATTACK_MODE_WEIGHTS['standard_attack'] = self.standard_attack_weight.value()
@@ -242,8 +278,17 @@ class MainWindow(QtWidgets.QMainWindow):
             # Update health requirement
             skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS = self.require_health_cb.isChecked()
             
-            # Save to file for persistence
-            self._save_main_config_to_file()
+            # Persist to JSON-backed config for durability
+            try:
+                skill_combo_config.update_config({
+                    'STEALTH_ATTACK_MODE_ENABLED': skill_combo_config.STEALTH_ATTACK_MODE_ENABLED,
+                    'ATTACK_MODE_WEIGHTS': skill_combo_config.ATTACK_MODE_WEIGHTS,
+                    'REQUIRE_MOB_HEALTH_FOR_SKILLS': skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS,
+                    'COMBAT_USE_SKILLS': skill_combo_config.COMBAT_USE_SKILLS,
+                })
+            except Exception:
+                # Fallback: attempt to save inline to the python file
+                self._save_main_config_to_file()
             
             self.log("✓ Skill combo configuration updated")
         except Exception as e:
@@ -311,6 +356,75 @@ class MainWindow(QtWidgets.QMainWindow):
             
         except Exception as e:
             logger.error(f"Failed to save main configuration to file: {e}")
+
+    def _refresh_cooldown_panel(self):
+        """Refresh the cooldown tables from the runtime SkillComboManager if available."""
+        scm = None
+        try:
+            if self._controller and hasattr(self._controller, 'action_planner'):
+                scm = getattr(self._controller.action_planner, 'skill_combo_manager', None)
+        except Exception:
+            scm = None
+
+        # Skills
+        skill_names = []
+        try:
+            import skill_combo_config as scc
+            if hasattr(scc, 'SKILL_COOLDOWNS'):
+                skill_names = list(scc.SKILL_COOLDOWNS.keys())
+        except Exception:
+            skill_names = []
+
+        self._skills_table.setRowCount(len(skill_names))
+        for r, name in enumerate(skill_names):
+            try:
+                item_name = QtWidgets.QTableWidgetItem(name)
+                if scm:
+                    rem = scm.get_skill_cooldown_remaining(name)
+                    txt = f"{rem:.1f}" if rem > 0 else "Ready"
+                else:
+                    txt = "Ready"
+                self._skills_table.setItem(r, 0, item_name)
+                self._skills_table.setItem(r, 1, QtWidgets.QTableWidgetItem(txt))
+            except Exception:
+                pass
+
+        # Combos
+        combo_names = []
+        try:
+            import skill_combo_config as scc
+            if hasattr(scc, 'COMBO_SETS'):
+                combo_names = list(scc.COMBO_SETS.keys())
+        except Exception:
+            combo_names = []
+
+        self._combos_table.setRowCount(len(combo_names))
+        for r, cname in enumerate(combo_names):
+            try:
+                item_name = QtWidgets.QTableWidgetItem(cname)
+                status = "Unknown"
+                if scm:
+                    rem = scm.get_combo_cooldown_remaining(cname)
+                    # try to get skills for the combo to determine readiness
+                    skills = []
+                    if hasattr(scm, 'get_combo_skills'):
+                        try:
+                            skills = scm.get_combo_skills(cname)
+                        except Exception:
+                            skills = []
+                    all_ready = True
+                    if hasattr(scm, 'are_all_skills_ready') and skills:
+                        all_ready = scm.are_all_skills_ready(skills)
+                    if rem > 0:
+                        status = f"Cooldown {rem:.1f}s"
+                    else:
+                        status = "Ready" if all_ready else "Waiting"
+                else:
+                    status = "Ready"
+                self._combos_table.setItem(r, 0, item_name)
+                self._combos_table.setItem(r, 1, QtWidgets.QTableWidgetItem(status))
+            except Exception:
+                pass
 
     def _on_backend_changed(self, backend: str):
         """User changed the input backend from the UI dropdown."""
@@ -429,12 +543,17 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
         self._controller.start()
         # Focus the game window immediately when starting
-        # try:
-        #     ic.focus_window(hwnd)
-        # except Exception:
-        #     pass
+        try:
+            ic.focus_window(hwnd)
+        except Exception:
+            pass
         # start periodic overlay repositioning to follow the target window
         self._pos_timer.start()
+        # start cooldown monitor refresh
+        try:
+            self._cooldown_timer.start()
+        except Exception:
+            pass
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.log("Started detection")
@@ -445,6 +564,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._controller = None
         self._overlay.hide()
         self._pos_timer.stop()
+        try:
+            self._cooldown_timer.stop()
+        except Exception:
+            pass
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.log("Stopped")
@@ -633,7 +756,7 @@ class KeybindCaptureDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
         
         # Instructions
-        instruction_label = QtWidgets.QLabel("Press any key or key combination...\n\nSupported: 1-9, 0, -, =\nWith modifiers: Alt+, Ctrl+")
+        instruction_label = QtWidgets.QLabel("Press a skill key:\n\nSupported: F1-F9, 1-9, 0, -, =")
         instruction_label.setAlignment(QtCore.Qt.AlignCenter)
         instruction_label.setStyleSheet("font-size: 14pt; padding: 20px;")
         layout.addWidget(instruction_label)
@@ -664,30 +787,34 @@ class KeybindCaptureDialog(QtWidgets.QDialog):
         key = event.key()
         modifiers = event.modifiers()
         
-        # Map special keys
+        # Map numeric and punctuation keys
         key_map = {
             QtCore.Qt.Key_1: '1', QtCore.Qt.Key_2: '2', QtCore.Qt.Key_3: '3',
             QtCore.Qt.Key_4: '4', QtCore.Qt.Key_5: '5', QtCore.Qt.Key_6: '6',
             QtCore.Qt.Key_7: '7', QtCore.Qt.Key_8: '8', QtCore.Qt.Key_9: '9',
             QtCore.Qt.Key_0: '0', QtCore.Qt.Key_Minus: '-', QtCore.Qt.Key_Equal: '=',
         }
-        
-        if key in key_map:
-            base_key = key_map[key]
-            
-            # Check for modifiers
-            if modifiers & QtCore.Qt.AltModifier:
-                self.captured_key = f"alt+{base_key}"
-            elif modifiers & QtCore.Qt.ControlModifier:
-                self.captured_key = f"ctrl+{base_key}"
-            else:
-                self.captured_key = base_key
-            
+
+        # Accept F1-F9 and numeric keys only; explicitly ignore modifier keys
+        if key in key_map and not (modifiers & (QtCore.Qt.AltModifier | QtCore.Qt.ControlModifier)):
+            self.captured_key = key_map[key]
             self.key_display.setText(self.captured_key)
             self.confirm_btn.setEnabled(True)
-        else:
-            self.key_display.setText("Invalid key! Use 1-9, 0, -, or =")
-            self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #f44336; padding: 10px;")
+            return
+
+        # Function keys F1..F9
+        f_keys = {QtCore.Qt.Key_F1: 'f1', QtCore.Qt.Key_F2: 'f2', QtCore.Qt.Key_F3: 'f3',
+                  QtCore.Qt.Key_F4: 'f4', QtCore.Qt.Key_F5: 'f5', QtCore.Qt.Key_F6: 'f6',
+                  QtCore.Qt.Key_F7: 'f7', QtCore.Qt.Key_F8: 'f8', QtCore.Qt.Key_F9: 'f9'}
+        if key in f_keys and not (modifiers & (QtCore.Qt.AltModifier | QtCore.Qt.ControlModifier)):
+            self.captured_key = f_keys[key]
+            self.key_display.setText(self.captured_key.upper())
+            self.confirm_btn.setEnabled(True)
+            return
+
+        # Otherwise invalid for skill binds
+        self.key_display.setText("Invalid key! Use F1-F9 or 1-9, 0, -, =")
+        self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #f44336; padding: 10px;")
 
 
 class SkillEditorDialog(QtWidgets.QDialog):
@@ -727,7 +854,7 @@ class SkillEditorDialog(QtWidgets.QDialog):
         
         self.skill_pool_edit = QtWidgets.QLineEdit()
         self.skill_pool_edit.setText(", ".join(self.config.SINGLE_SKILL_POOL))
-        self.skill_pool_edit.setPlaceholderText("Click 'Press Key to Add' or type manually: 1, 2, 3, 4, alt+1")
+        self.skill_pool_edit.setPlaceholderText("Click 'Press Key to Add' or type manually: 1, 2, 3, 4, f1")
         pool_layout.addWidget(self.skill_pool_edit)
         
         gcd_layout = QtWidgets.QHBoxLayout()
@@ -1247,7 +1374,104 @@ def run_app():
     
     # Interception is the required backend for input control
     logger.info("Interception backend enforced; ensure interception driver is installed")
-    
+
+    # Pre-start checklist dialog
+    class PreStartDialog(QtWidgets.QDialog):
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.setWindowTitle("Before You Start - Read Carefully")
+            self.setModal(True)
+            self.setMinimumSize(700, 520)
+
+            layout = QtWidgets.QVBoxLayout(self)
+
+            info = QtWidgets.QLabel(
+                "Please verify the following BEFORE starting the macro:\n\n"
+                "- Make sure the Game is running in Windowed Mode\n"
+                "- Make sure the Player is already in the hunting/farming area\n"
+                "- Ensure the Interception driver is installed (the program can install it)\n"
+                "- Double-check and configure your Skills and Combos (no misinputs)\n\n"
+                "Recommended In-Game Settings to verify:\n"
+                "Graphics -> Display Mode -> Windowed Mode\n"
+                "Graphics -> Nvidia Reflex -> BOOST (if using Nvidia)\n"
+                "Key Settings -> Change Target -> Tab key\n"
+                "Combat -> Target Scanning -> Preferred Search Direction -> Front of Camera\n"
+                "Combat -> Target Scanning -> Target Scanning Detailed Settings -> Closest First\n"
+                "Combat -> Controls -> Control Mode -> AION 1\n"
+                "Combat -> Controls -> Click ground to Move -> Allow Both Sides\n"
+                "Combat -> Controls -> Pursue Targets with Skill Activation -> ON\n"
+                "Combat -> Controls -> Use Basic Attack Repeatedly -> ON\n"
+                "Combat -> Controls -> Auto Target upon Skill use -> ON\n"
+            )
+            info.setWordWrap(True)
+            layout.addWidget(info)
+
+            # Spacer + button
+            spacer = QtWidgets.QSpacerItem(20, 20, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+            layout.addItem(spacer)
+
+            btn = QtWidgets.QPushButton("I Understand and Done Everything")
+            btn.setFixedHeight(44)
+            btn.clicked.connect(self.accept)
+            btn.setStyleSheet("QPushButton { font-weight: bold; font-size: 12pt; padding: 8px; }")
+            h = QtWidgets.QHBoxLayout()
+            h.addStretch()
+            h.addWidget(btn)
+            h.addStretch()
+            layout.addLayout(h)
+
+    def _check_and_install_interception(parent_window=None):
+        """Check for driver sys files and attempt installation if missing.
+
+        Returns True if drivers are present after this call (may require restart), False otherwise.
+        """
+        try:
+            import subprocess
+            from pathlib import Path
+            sysroot = os.environ.get('SystemRoot', r'C:\Windows')
+            drivers_dir = Path(sysroot) / 'System32' / 'drivers'
+            required = [drivers_dir / 'mouse.sys', drivers_dir / 'keyboard.sys']
+            missing = [p for p in required if not p.exists()]
+            if not missing:
+                return True
+
+            # Attempt to run bundled installer (requires admin - run_app already ensures elevation)
+            installer = Path(__file__).parent / 'Interception' / 'command line installer' / 'install-interception.exe'
+            if installer.exists():
+                try:
+                    subprocess.run([str(installer), '/S'], check=False)
+                except Exception as e:
+                    logger.error(f"Failed to run interceptor installer: {e}")
+            else:
+                logger.warning("Interception installer not found in repository; please install manually")
+
+            # Re-check files
+            missing = [p for p in required if not p.exists()]
+            if missing:
+                # Inform user to restart after manual install or that automatic install failed
+                QtWidgets.QMessageBox.warning(parent_window, "Interception Driver",
+                                              "Interception driver appears not to be installed.\n"
+                                              "Automatic installation failed or requires manual steps.\n"
+                                              "Please install the Interception driver and reboot your PC.")
+                return False
+            else:
+                # Notify user to restart to finalize installation
+                QtWidgets.QMessageBox.information(parent_window, "Interception Installed",
+                                                  "Interception driver installed. Please RESTART your computer to ensure the driver is activated.")
+                return True
+        except Exception as e:
+            logger.error(f"Error while checking/installing interception: {e}")
+            return False
+
+    # Show pre-start checklist and require explicit confirmation
+    dlg = PreStartDialog()
+    if dlg.exec() != QtWidgets.QDialog.Accepted:
+        logger.info("User cancelled pre-start checklist; exiting")
+        return
+
+    # After user confirmation, check and attempt to install interception if necessary
+    _check_and_install_interception()
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

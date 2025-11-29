@@ -79,6 +79,14 @@ class ActionPlanner:
         self._attack_interval = (0.45, 1.25)  # seconds between R/T presses during combat
         self._last_cooldown_action = 0.0
         self._cooldown_f_interval = (0.6, 1.8)  # random press F intervals during 5s cooldown
+        # roaming (idle movement) state
+        self._roaming = False
+        self._roam_thread = None
+        self._last_roam_time = 0.0
+        self._roam_cooldown = (3.0, 8.0)  # seconds between roam attempts
+        # consecutive no-detections counter (trigger roam after N empties)
+        self._no_mobs_count = 0
+        self._no_mobs_threshold = 5
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -289,14 +297,12 @@ class ActionPlanner:
                 # Acquire target: press tab to lock-on and then trigger an attack (R or T)
                 try:
                     ic.focus_window(self.hwnd)
-                    # Press Tab to target (one press)
-                    ic.tap_key('tab')
+                    # Press Tab to target (single press)
                     ic.tap_key('tab')
                     # small human-like delay
                     time.sleep(random.uniform(0.08, 0.20))
                     # press either 'r' or 't' once
                     atk = random.choice(['r', 't'])
-                    ic.tap_key(atk)
                     ic.tap_key(atk)
                     logger.info(f"ActionPlanner: target acquired via TAB and initial attack '{atk.upper()}'")
                 except Exception as e:
@@ -318,10 +324,39 @@ class ActionPlanner:
                 if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
                     ic.focus_window(self.hwnd)
                     try:
-                        atk = random.choice(['r', 't'])
-                        ic.tap_key(atk)
-                        self._last_attack = time.time()
-                        logger.info(f"ActionPlanner(COMBAT): pressed '{atk.upper()}' (single) against target")
+                        executed = False
+                        # Attempt to execute a skill or combo if enabled in config and manager available
+                        try:
+                            import skill_combo_config as scc
+                        except Exception:
+                            scc = None
+
+                        if (self.skill_combo_manager is not None and scc is not None
+                                and getattr(scc, 'SKILL_COMBO_ENABLED', True)
+                                and getattr(scc, 'COMBAT_USE_SKILLS', True)):
+                            # Determine whether the current locked target has a health bar
+                            has_health = False
+                            try:
+                                has_health = bool(self._find_health_for(self._current_target, detections))
+                            except Exception:
+                                has_health = False
+                            try:
+                                mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
+                                # If a skill/combo was executed (success True) and it wasn't a plain standard attack,
+                                # consider the action handled.
+                                if mode != 'standard_attack' and success:
+                                    executed = True
+                                    self._last_attack = time.time()
+                                    logger.info(f"ActionPlanner(COMBAT): executed '{mode}' against target")
+                            except Exception as e:
+                                logger.debug(f"SkillComboManager attempt failed: {e}")
+
+                        if not executed:
+                            # Fallback: do a standard light/heavy attack (single press)
+                            atk = random.choice(['r', 't'])
+                            ic.tap_key(atk)
+                            self._last_attack = time.time()
+                            logger.info(f"ActionPlanner(COMBAT): pressed '{atk.upper()}' (single) against target")
                     except Exception as e:
                         logger.error(f"ActionPlanner(COMBAT): attack press failed: {e}")
                 return
@@ -359,7 +394,90 @@ class ActionPlanner:
                 self._current_target = None
 
         # 2) No monsters detected: do nothing (movement macros removed)
-        # The planner will wait in scanning mode until a monster appears.
+        # The planner will optionally perform roaming (look-around / move) when no monsters
+        # are present and the user has enabled roaming in configuration.
         if not mobs:
+            # increment consecutive empty-detection counter
+            self._no_mobs_count += 1
+            try:
+                import skill_combo_config as scc
+            except Exception:
+                scc = None
+
+            if scc is not None and getattr(scc, 'ENABLE_ROAM', False):
+                # Trigger roaming when we've had N consecutive empties
+                if self._no_mobs_count >= self._no_mobs_threshold:
+                    if not self._roaming:
+                        self._roaming = True
+                        self._last_roam_time = time.time()
+                        # reset counter to avoid immediate retrigger
+                        self._no_mobs_count = 0
+                        t = threading.Thread(target=self._perform_roam, daemon=True)
+                        self._roam_thread = t
+                        t.start()
             return
+        else:
+            # reset counter when any mob is detected
+            self._no_mobs_count = 0
         # No movement macros — when no monsters are detected, remain idle in scanning mode.
+
+    def _perform_roam(self):
+        """Background roaming routine: move forward, then perform a short look-around swipe.
+
+        Runs in a separate thread so it does not block the detection loop.
+        """
+        try:
+            import skill_combo_config as scc
+        except Exception:
+            scc = None
+
+        # Determine forward movement duration and swipe parameters
+        forward_sec = random.uniform(1.5, 3.5)
+        turn_dx = random.randint(150, 360)  # pixels to swipe
+        swipe_time = random.uniform(0.4, 1.1)
+        # move forward
+        try:
+            ic.focus_window(self.hwnd)
+            # hold W for forward movement (blocks inside thread)
+            ic.hold_key('w', forward_sec)
+        except Exception:
+            pass
+
+        # short pause
+        time.sleep(random.uniform(0.08, 0.25))
+
+        # perform look-around: hold right mouse and swipe left or right
+        try:
+            ic.focus_window(self.hwnd)
+            # pick direction
+            dir_right = random.choice([True, False])
+            dx = turn_dx if dir_right else -turn_dx
+            # press and hold right mouse
+            try:
+                ic.hold_mouse_down('right')
+            except Exception as e:
+                # Do not fallback to other backends; log and skip the hold/swipe
+                logger.warning(f"ActionPlanner: hold_mouse_down failed during roam: {e}")
+                # Ensure roaming flag is reset and exit early from this roam
+                try:
+                    self._roaming = False
+                except Exception:
+                    pass
+                return
+            # perform relative mouse movement while held
+            try:
+                ic.move_mouse_by(dx, 0, duration=swipe_time, steps=12)
+            except Exception:
+                pass
+        finally:
+            # release right mouse
+            try:
+                ic.release_mouse('right')
+            except Exception:
+                pass
+
+        # small pause after swipe
+        time.sleep(random.uniform(0.08, 0.18))
+
+        # mark roaming finished
+        self._roaming = False

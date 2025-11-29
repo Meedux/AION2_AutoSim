@@ -150,38 +150,23 @@ class SkillComboManager:
             True if skill was executed, False if failed
         """
         try:
-            # Parse skill into modifier + key
-            modifier, key = skill_combo_config.parse_skill_keybind(skill)
-            
-            # Focus game window
-            focus_window(self.hwnd)
-            
-            # Execute the skill with hardware-level input
-            if modifier is None:
-                # Simple key press
-                tap_key(key)
-                logger.debug(f"Skill executed: {key}")
-            elif modifier == 'alt':
-                # Alt + key combination
-                # Hold Alt, press key, release Alt
-                from input_controller import press_key_combination
-                press_key_combination('alt', key)
-                logger.debug(f"Skill executed: Alt+{key}")
-            elif modifier == 'ctrl':
-                # Ctrl + key combination
-                from input_controller import press_key_combination
-                press_key_combination('ctrl', key)
-                logger.debug(f"Skill executed: Ctrl+{key}")
-            else:
-                logger.warning(f"Unknown modifier: {modifier}")
+            # Parse and normalize key (modifiers stripped by config parser)
+            _, key = skill_combo_config.parse_skill_keybind(skill)
+
+            # Normalize lookup and cooldown check
+            skill_lower = key.lower()
+            if not self.is_skill_ready(skill_lower):
+                logger.debug(f"Skill '{skill}' (normalized '{skill_lower}') is on cooldown; skipping execution")
                 return False
-            
+
+            # Focus game window and send a single key press via interception-only API
+            focus_window(self.hwnd)
+            tap_key(skill_lower)
+            logger.debug(f"Skill executed: {skill_lower}")
+
             # Mark skill as used
-            skill_lower = skill.lower()
             self._skill_cooldowns[skill_lower] = time.time()
-            
             return True
-            
         except Exception as e:
             logger.error(f"Failed to execute skill '{skill}': {e}")
             return False
@@ -202,8 +187,15 @@ class SkillComboManager:
         logger.info(f"Executing combo: {combo_name} ({len(skills)} skills)")
         
         try:
+            # Ensure combo and skills are ready before executing
+            if not self.is_combo_ready(combo):
+                logger.debug(f"Combo '{combo_name}' is on cooldown; skipping execution")
+                return False
+            if not self.are_all_skills_ready(skills):
+                logger.debug(f"Combo '{combo_name}' has skills on cooldown; skipping execution")
+                return False
+
             # Optional pre-macro focus + delay
-            # Combo-level `pre_focus` overrides global `PRE_MACRO_FOCUS_ENABLED`.
             pre_focus = combo.get('pre_focus', None)
             if pre_focus is None:
                 pre_focus = skill_combo_config.PRE_MACRO_FOCUS_ENABLED
@@ -217,23 +209,23 @@ class SkillComboManager:
                 time.sleep(randomized_pre_delay)
 
             for idx, skill in enumerate(skills):
-                # Execute the skill
+                # Execute the skill (execute_skill now validates per-skill cooldown)
                 if not self.execute_skill(skill):
                     logger.warning(f"Combo '{combo_name}' interrupted at skill {idx+1}/{len(skills)}")
                     return False
-                
+
                 # Wait between skills (except after the last one)
                 if idx < len(skills) - 1:
                     randomized_delay = skill_combo_config.get_randomized_delay(delay)
                     logger.debug(f"Delay {randomized_delay:.2f}s before next skill")
                     time.sleep(randomized_delay)
-            
+
             # Mark combo as used
             self._combo_cooldowns[combo_name] = time.time()
-            
+
             logger.success(f"✓ Combo '{combo_name}' executed successfully")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error executing combo '{combo_name}': {e}")
             return False

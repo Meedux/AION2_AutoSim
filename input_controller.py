@@ -25,6 +25,7 @@ import time
 import logging
 import win32gui
 import win32con
+from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,64 @@ def click_at(x: int, y: int, button: str = 'left', clicks: int = 1, interval: fl
     if not _load_interception():
         raise RuntimeError('Interception backend required but interception DLL/driver failed to load')
     return _click_at_interception(x, y, button=button, clicks=clicks, interval=interval)
+
+
+def hold_mouse_down(button: str = 'right') -> bool:
+    """Press and hold a mouse button (does NOT release).
+
+    Use `release_mouse(button)` to release. In DRY_RUN mode this logs the call.
+    """
+    btn = (button or 'right').lower()
+    if _is_dry_run():
+        logger.info(f"DRY_RUN: hold_mouse_down({btn})")
+        return True
+    if not _load_interception():
+        raise RuntimeError('Interception backend required but interception DLL/driver failed to load')
+    code = INTERCEPTION_MOUSE_RIGHT_BUTTON_DOWN if btn == 'right' else INTERCEPTION_MOUSE_LEFT_BUTTON_DOWN
+    stroke = _InterceptionMouseStroke(state=code, flags=0, rolling=0, x=0, y=0, information=0)
+    res = _INTERCEPTION_DLL.interception_send(_INTERCEPTION_CTX, 11, ctypes.byref(stroke), 1)
+    return res != 0
+
+
+def release_mouse(button: str = 'right') -> bool:
+    """Release a previously held mouse button. In DRY_RUN mode this logs the call."""
+    btn = (button or 'right').lower()
+    if _is_dry_run():
+        logger.info(f"DRY_RUN: release_mouse({btn})")
+        return True
+    if not _load_interception():
+        raise RuntimeError('Interception backend required but interception DLL/driver failed to load')
+    code = INTERCEPTION_MOUSE_RIGHT_BUTTON_UP if btn == 'right' else INTERCEPTION_MOUSE_LEFT_BUTTON_UP
+    stroke = _InterceptionMouseStroke(state=code, flags=0, rolling=0, x=0, y=0, information=0)
+    res = _INTERCEPTION_DLL.interception_send(_INTERCEPTION_CTX, 11, ctypes.byref(stroke), 1)
+    return res != 0
+
+
+def move_mouse_by(dx: int, dy: int, duration: float = 0.2, steps: int = 8) -> bool:
+    """Move the mouse by a relative amount over a duration (interpolated steps).
+
+    This uses the interception mouse move stroke. Uses screen absolute positions computed
+    from the current cursor position. In DRY_RUN mode this logs the intended motion.
+    """
+    if _is_dry_run():
+        logger.info(f"DRY_RUN: move_mouse_by(dx={dx}, dy={dy}, duration={duration})")
+        return True
+    try:
+        cx, cy = win32gui.GetCursorPos()
+    except Exception:
+        # Fallback to (0,0)
+        cx, cy = 0, 0
+    tx = int(cx + dx)
+    ty = int(cy + dy)
+    steps = max(1, int(steps))
+    sleep_per = max(0.0, duration / steps) if duration > 0 else 0.0
+    for i in range(1, steps + 1):
+        ix = int(cx + (tx - cx) * (i / steps))
+        iy = int(cy + (ty - cy) * (i / steps))
+        _interception_send_mouse_move(ix, iy)
+        if sleep_per:
+            time.sleep(sleep_per)
+    return True
 
 
 def double_click_at(x: int, y: int):
