@@ -78,7 +78,10 @@ class DetectionController:
                 except Exception:
                     pass
                 # Let the model client decide resizing via its imgsz; but we will pass the frame_for_model as-is.
+                t0 = time.time()
                 preds = self.client.predict(frame_for_model)
+                t1 = time.time()
+                inference_ms = (t1 - t0) * 1000.0
 
                 sent_h, sent_w = frame_for_model.shape[:2]
                 sx = orig_w / sent_w if sent_w and orig_w else 1.0
@@ -97,6 +100,12 @@ class DetectionController:
 
                 # Update latest detection list (in pixel coords for the original window)
                 self._detections = conv
+                # record whether this frame had detections for the action planner to consult
+                try:
+                    self.action_planner._last_frame_had_detections = bool(len(conv))
+                    self.action_planner._last_inference_ms = inference_ms
+                except Exception:
+                    pass
                 # push to overlay (pass overlay target size as orig window size)
                 # Push the new detections immediately to overlay
                 try:

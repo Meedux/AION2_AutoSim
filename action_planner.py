@@ -87,6 +87,8 @@ class ActionPlanner:
         # consecutive no-detections counter (trigger roam after N empties)
         self._no_mobs_count = 0
         self._no_mobs_threshold = 5
+        # store last detections so roaming thread can re-check for monsters
+        self._last_detections: List[Dict] = []
 
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
@@ -254,6 +256,13 @@ class ActionPlanner:
         self._last_action = now
         self._action_count += 1
 
+        # update last detections (for roam thread to consult)
+        try:
+            with self._lock:
+                self._last_detections = list(detections)
+        except Exception:
+            self._last_detections = list(detections)
+
         left, top, w, h = window_rect
 
         # Global cooldown behavior: if in cooldown mode, randomly press F during the cooldown window
@@ -397,8 +406,21 @@ class ActionPlanner:
         # The planner will optionally perform roaming (look-around / move) when no monsters
         # are present and the user has enabled roaming in configuration.
         if not mobs:
-            # increment consecutive empty-detection counter
-            self._no_mobs_count += 1
+            # Only count this as an "empty detection" if the detection loop also
+            # reported that the last inference produced no detections. DetectionController
+            # sets `_last_frame_had_detections` on this ActionPlanner instance when available.
+            has_frame_detections = getattr(self, '_last_frame_had_detections', None)
+            if has_frame_detections is None:
+                # detection loop hasn't provided a flag; fall back to previous behavior
+                self._no_mobs_count += 1
+            else:
+                # Only increment when the detection loop explicitly reported no detections
+                if has_frame_detections is False:
+                    self._no_mobs_count += 1
+                else:
+                    # detection loop reported detections (even if filtered by conf_thresh)
+                    # treat this as a reset of the empty counter
+                    self._no_mobs_count = 0
             try:
                 import skill_combo_config as scc
             except Exception:
@@ -407,14 +429,19 @@ class ActionPlanner:
             if scc is not None and getattr(scc, 'ENABLE_ROAM', False):
                 # Trigger roaming when we've had N consecutive empties
                 if self._no_mobs_count >= self._no_mobs_threshold:
-                    if not self._roaming:
-                        self._roaming = True
-                        self._last_roam_time = time.time()
-                        # reset counter to avoid immediate retrigger
-                        self._no_mobs_count = 0
-                        t = threading.Thread(target=self._perform_roam, daemon=True)
-                        self._roam_thread = t
-                        t.start()
+                    now_roam = time.time()
+                    # ensure roam cooldown window elapsed
+                    min_cd, max_cd = self._roam_cooldown
+                    if now_roam - self._last_roam_time >= random.uniform(min_cd, max_cd):
+                        if not self._roaming:
+                            self._roaming = True
+                            self._last_roam_time = now_roam
+                            # reset counter to avoid immediate retrigger
+                            self._no_mobs_count = 0
+                            t = threading.Thread(target=self._perform_roam, daemon=True)
+                            self._roam_thread = t
+                            t.start()
+            # finished handling empty-detection case; return to avoid falling through
             return
         else:
             # reset counter when any mob is detected
@@ -431,53 +458,71 @@ class ActionPlanner:
         except Exception:
             scc = None
 
-        # Determine forward movement duration and swipe parameters
-        forward_sec = random.uniform(1.5, 3.5)
-        turn_dx = random.randint(150, 360)  # pixels to swipe
-        swipe_time = random.uniform(0.4, 1.1)
-        # move forward
+        # Roam attempt sequence: try a few short forward+look-around cycles
+        max_retries = 3
         try:
-            ic.focus_window(self.hwnd)
-            # hold W for forward movement (blocks inside thread)
-            ic.hold_key('w', forward_sec)
-        except Exception:
-            pass
+            for attempt in range(max_retries):
+                # Determine forward movement duration and swipe parameters per attempt
+                forward_sec = random.uniform(1.0, 2.5)
+                turn_dx = random.randint(120, 360)  # pixels to swipe
+                swipe_time = random.uniform(0.35, 1.0)
 
-        # short pause
-        time.sleep(random.uniform(0.08, 0.25))
-
-        # perform look-around: hold right mouse and swipe left or right
-        try:
-            ic.focus_window(self.hwnd)
-            # pick direction
-            dir_right = random.choice([True, False])
-            dx = turn_dx if dir_right else -turn_dx
-            # press and hold right mouse
-            try:
-                ic.hold_mouse_down('right')
-            except Exception as e:
-                # Do not fallback to other backends; log and skip the hold/swipe
-                logger.warning(f"ActionPlanner: hold_mouse_down failed during roam: {e}")
-                # Ensure roaming flag is reset and exit early from this roam
+                # move forward briefly to change position
                 try:
-                    self._roaming = False
+                    ic.focus_window(self.hwnd)
+                    ic.hold_key('w', forward_sec)
+                except Exception as e:
+                    logger.debug(f"ActionPlanner(ROAM): failed to hold 'w' forward: {e}")
+
+                # tiny pause
+                time.sleep(random.uniform(0.08, 0.25))
+
+                # perform look-around: hold right mouse and swipe left or right
+                try:
+                    ic.focus_window(self.hwnd)
+                    dir_right = random.choice([True, False])
+                    dx = turn_dx if dir_right else -turn_dx
+                    # press and hold right mouse; abort roam if this fails
+                    ic.hold_mouse_down('right')
+                except Exception as e:
+                    logger.warning(f"ActionPlanner: hold_mouse_down failed during roam: {e}")
+                    break
+
+                try:
+                    # perform relative mouse movement while held
+                    ic.move_mouse_by(dx, 0, duration=swipe_time, steps=12)
+                except Exception as e:
+                    logger.debug(f"ActionPlanner(ROAM): move_mouse_by failed: {e}")
+                finally:
+                    try:
+                        ic.release_mouse('right')
+                    except Exception:
+                        pass
+
+                # after each swipe, pause briefly to allow the detection loop to produce new frames
+                pause_after = random.uniform(0.25, 0.6)
+                time.sleep(pause_after)
+
+                # Check if any monsters were detected since we started roaming
+                try:
+                    with self._lock:
+                        recent = list(self._last_detections)
                 except Exception:
-                    pass
-                return
-            # perform relative mouse movement while held
-            try:
-                ic.move_mouse_by(dx, 0, duration=swipe_time, steps=12)
-            except Exception:
-                pass
+                    recent = list(self._last_detections)
+
+                found = False
+                try:
+                    found = bool(self._find_all_monsters(recent))
+                except Exception:
+                    found = False
+
+                if found:
+                    logger.info("ActionPlanner(ROAM): detected monsters during roam, aborting roam and returning to scanning")
+                    break
+
+                # small random pause between attempts
+                time.sleep(random.uniform(0.2, 0.6))
+
         finally:
-            # release right mouse
-            try:
-                ic.release_mouse('right')
-            except Exception:
-                pass
-
-        # small pause after swipe
-        time.sleep(random.uniform(0.08, 0.18))
-
-        # mark roaming finished
-        self._roaming = False
+            # Ensure roaming flag is cleared
+            self._roaming = False
