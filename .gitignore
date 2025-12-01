@@ -131,3 +131,6 @@ models/*.onnx
 
 # .vs
 .github
+
+# Build output
+/output/

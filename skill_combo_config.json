@@ -31,19 +31,6 @@
       "cooldown": 60.0,
       "delay_between_skills": 0.5,
       "enabled": true
-    },
-    {
-      "name": "Ultimate Combo",
-      "skills": [
-        "f1",
-        "5",
-        "6",
-        "7",
-        "f2"
-      ],
-      "cooldown": 180.0,
-      "delay_between_skills": 1.0,
-      "enabled": true
     }
   ],
   "DELAY_RANDOMIZATION": 0.15,
@@ -65,8 +52,10 @@
     "2",
     "3",
     "4",
-    "5"
+    "5",
+    "6"
   ],
   "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5,
-  "COMBAT_USE_SKILLS": true
+  "COMBAT_USE_SKILLS": true,
+  "LANGUAGE": "en"
 }

@@ -9,6 +9,7 @@ public API calls raise a clear RuntimeError.
 """
 from typing import Optional
 import os
+import sys
 import ctypes
 from ctypes import wintypes
 from pathlib import Path
@@ -472,6 +473,18 @@ def _load_interception():
             logger.warning(f"interception: failed to load from candidates {tried}: {e}")
             _INTERCEPTION_DLL = None
     if _INTERCEPTION_DLL is None:
+        # As a last resort attempt to run the Interception installer (requires elevation)
+        try:
+            if _attempt_install_interception():
+                # After installer runs attempt to load again from system name
+                try:
+                    _INTERCEPTION_DLL = ctypes.WinDLL('interception')
+                    tried.append('system:interception-after-install')
+                except Exception:
+                    _INTERCEPTION_DLL = None
+        except Exception:
+            pass
+    if _INTERCEPTION_DLL is None:
         return False
     try:
         # define functions with precise prototypes
@@ -494,6 +507,72 @@ def _load_interception():
         logger.warning(f"Failed to initialize interception DLL: {e}")
         _INTERCEPTION_DLL = None
         _INTERCEPTION_CTX = None
+        return False
+
+
+def _attempt_install_interception() -> bool:
+    """Attempt to run the Interception installer found in common locations.
+
+    This will attempt to launch the bundled `install-interception.exe` with
+    elevation (ShellExecuteW verb 'runas'). After launching the installer it
+    retries loading the interception DLL a few times. Returns True if the
+    installer was launched (and DLL becomes loadable), False otherwise.
+    """
+    try:
+        candidates = []
+        # Installer alongside this module (source tree)
+        candidates.append(Path(__file__).parent / 'Interception' / 'command line installer' / 'install-interception.exe')
+        # Installer relative to the running executable (when packaged in output/)
+        try:
+            exe_parent = Path(sys.argv[0]).parent
+            candidates.append(exe_parent / 'Interception' / 'command line installer' / 'install-interception.exe')
+        except Exception:
+            pass
+        # Installer from current working directory
+        candidates.append(Path.cwd() / 'Interception' / 'command line installer' / 'install-interception.exe')
+
+        installer_path = None
+        for c in candidates:
+            if c.exists():
+                installer_path = c
+                break
+        if installer_path is None:
+            logger.debug(f"No Interception installer found in candidates: {candidates}")
+            return False
+
+        logger.info(f"Attempting to run Interception installer: {installer_path}")
+        # Launch elevated installer using ShellExecuteW
+        try:
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(installer_path), None, str(installer_path.parent), 1)
+            if int(ret) <= 32:
+                logger.warning(f"ShellExecuteW failed to launch installer, code={ret}")
+                return False
+        except Exception as e:
+            logger.warning(f"Failed to launch installer via ShellExecuteW: {e}")
+            return False
+
+        # Wait & retry loading DLL a few times
+        for attempt in range(8):
+            time.sleep(2)
+            # try known candidate dll locations again
+            for lib_path in [
+                Path(__file__).parent / 'Interception' / 'library' / 'x64' / 'interception.dll',
+                Path(__file__).parent / 'Interception' / 'library' / 'x86' / 'interception.dll',
+                exe_parent / 'Interception' / 'library' / 'x64' / 'interception.dll' if 'exe_parent' in locals() else None,
+            ]:
+                if lib_path is None:
+                    continue
+                if lib_path.exists():
+                    try:
+                        ctypes.WinDLL(str(lib_path))
+                        logger.info("Interception DLL detected after installer run")
+                        return True
+                    except Exception:
+                        continue
+        logger.warning("Interception installer ran but DLL not detected after retries")
+        return False
+    except Exception as e:
+        logger.warning(f"_attempt_install_interception failed: {e}")
         return False
 
 

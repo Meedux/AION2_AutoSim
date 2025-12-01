@@ -95,6 +95,7 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     # When true, the planner will perform idle roaming: move forward and look around
     # when no monsters are detected. Toggleable in the UI.
     "ENABLE_ROAM": True,
+    "LANGUAGE": "en",
 }
 
 
@@ -132,6 +133,7 @@ def _refresh_module_vars() -> None:
     global PRE_MACRO_FOCUS_ENABLED, PRE_MACRO_FOCUS_DELAY, INPUT_BACKEND, INPUT_DRY_RUN
     global COMBO_PRIORITY, STEALTH_ATTACK_MODE_ENABLED, ATTACK_MODE_WEIGHTS
     global REQUIRE_MOB_HEALTH_FOR_SKILLS, SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
+    global COMBAT_USE_SKILLS, ENABLE_ROAM, LANGUAGE
 
     # Normalize skill keys: strip any leading 'alt+' or 'ctrl+' and normalize to lowercase
     raw_skills = _config.get('SKILL_COOLDOWNS', {}) or {}
@@ -180,6 +182,7 @@ def _refresh_module_vars() -> None:
     SINGLE_SKILL_GLOBAL_COOLDOWN = float(_config.get('SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5))
     COMBAT_USE_SKILLS = bool(_config.get('COMBAT_USE_SKILLS', True))
     ENABLE_ROAM = bool(_config.get('ENABLE_ROAM', True))
+    LANGUAGE = _config.get('LANGUAGE', 'en')
 
 
 _refresh_module_vars()
