@@ -40,7 +40,6 @@ TRANSLATIONS = {
         'label_standard_weight': 'Standard Attack Weight (Tab-target):',
         'label_single_weight': 'Single Skill Weight:',
         'label_combo_weight': 'Combo Set Weight:',
-        'checkbox_require_health': 'Only use skills when mob health bar detected',
         'checkbox_combat_skills': 'Enable skills & combos during combat',
         'button_edit_skills': '⚙️ Edit Individual Skills',
         'button_edit_combos': '🎯 Edit Combo Sets',
@@ -215,7 +214,6 @@ TRANSLATIONS = {
         'label_standard_weight': '일반 공격 가중치 (탭 타겟):',
         'label_single_weight': '단일 스킬 가중치:',
         'label_combo_weight': '콤보 세트 가중치:',
-        'checkbox_require_health': '몹 체력바 감지 시에만 스킬 사용',
         'checkbox_combat_skills': '전투 중 스킬 & 콤보 사용',
         'button_edit_skills': '⚙️ 개별 스킬 편집',
         'button_edit_combos': '🎯 콤보 세트 편집',
@@ -628,14 +626,6 @@ class MainWindow(QtWidgets.QMainWindow):
         
         skill_layout.addLayout(weights_layout)
         
-        # Require mob health checkbox
-        self.require_health_cb = QtWidgets.QCheckBox()
-        self._register_translatable(self.require_health_cb.setText, 'checkbox_require_health')
-        self.require_health_cb.setText(self.tr('checkbox_require_health'))
-        self.require_health_cb.setChecked(skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS)
-        self.require_health_cb.stateChanged.connect(self._update_skill_config)
-        skill_layout.addWidget(self.require_health_cb)
-
         # Combat skills & combos toggle
         self.combat_skills_cb = QtWidgets.QCheckBox()
         self._register_translatable(self.combat_skills_cb.setText, 'checkbox_combat_skills')
@@ -977,29 +967,16 @@ class MainWindow(QtWidgets.QMainWindow):
             skill_combo_config.ATTACK_MODE_WEIGHTS['combo_set'] = self.combo_set_weight.value()
             
             # Update health requirement
-            skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS = self.require_health_cb.isChecked()
-            
             # Persist to JSON-backed config for durability
             try:
                 skill_combo_config.update_config({
                     'STEALTH_ATTACK_MODE_ENABLED': skill_combo_config.STEALTH_ATTACK_MODE_ENABLED,
                     'ATTACK_MODE_WEIGHTS': skill_combo_config.ATTACK_MODE_WEIGHTS,
-                    'REQUIRE_MOB_HEALTH_FOR_SKILLS': skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS,
                     'COMBAT_USE_SKILLS': skill_combo_config.COMBAT_USE_SKILLS,
                 })
-            except Exception:
-                # Fallback: try to persist minimal keys directly to JSON using save_config
-                try:
-                    # Merge current values into the JSON-backed config
-                    skill_combo_config.update_config({
-                        'STEALTH_ATTACK_MODE_ENABLED': skill_combo_config.STEALTH_ATTACK_MODE_ENABLED,
-                        'ATTACK_MODE_WEIGHTS': skill_combo_config.ATTACK_MODE_WEIGHTS,
-                        'REQUIRE_MOB_HEALTH_FOR_SKILLS': skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS,
-                        'COMBAT_USE_SKILLS': skill_combo_config.COMBAT_USE_SKILLS,
-                    })
-                except Exception as e:
-                    self.log(f"Failed to persist skill config to JSON: {e}")
-            
+            except Exception as e:
+                self.log(f"Failed to persist skill config to JSON: {e}")
+            else:
                 self.log(self.tr('log_skill_config_updated'))
         except Exception as e:
             self.log(f"Failed to update skill config: {e}")
@@ -1022,10 +999,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 # Replace STEALTH_ATTACK_MODE_ENABLED
                 if 'STEALTH_ATTACK_MODE_ENABLED = ' in line and not line.strip().startswith('#'):
                     new_lines.append(f'STEALTH_ATTACK_MODE_ENABLED = {skill_combo_config.STEALTH_ATTACK_MODE_ENABLED}\n')
-                
-                # Replace REQUIRE_MOB_HEALTH_FOR_SKILLS
-                elif 'REQUIRE_MOB_HEALTH_FOR_SKILLS = ' in line and not line.strip().startswith('#'):
-                    new_lines.append(f'REQUIRE_MOB_HEALTH_FOR_SKILLS = {skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS}\n')
                 
                 # Replace ATTACK_MODE_WEIGHTS dictionary
                 elif 'ATTACK_MODE_WEIGHTS = {' in line:

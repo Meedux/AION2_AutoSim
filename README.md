@@ -338,7 +338,7 @@ DLL must match your Python bitness.
 **Solutions**:
 1. Check `ATTACK_MODE_RANDOMIZATION_ENABLED = True`
 2. Verify attack weights sum to ~1.0
-3. Ensure `REQUIRE_MOB_HEALTH_FOR_SKILLS = True` and health bars are detected
+3. Ensure `COMBAT_USE_SKILLS = True`
 4. Check individual skill cooldowns (may still be on cooldown)
 5. Run `python test_skill_combos.py` to validate config
 
@@ -366,7 +366,7 @@ DLL must match your Python bitness.
 1. Check all skills in combo are off cooldown
 2. Verify `combo_set` weight > 0.0
 3. Check combo `enabled: True` in `COMBO_SETS`
-4. Ensure `REQUIRE_MOB_HEALTH_FOR_SKILLS = True` and health detected
+4. Ensure `COMBAT_USE_SKILLS = True`
 
 ---
 

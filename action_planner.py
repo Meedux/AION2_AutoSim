@@ -90,6 +90,17 @@ class ActionPlanner:
         # store last detections so roaming thread can re-check for monsters
         self._last_detections: List[Dict] = []
 
+    def _send_follow_up_attack(self):
+        """Fire a light/heavy attack so the character resumes basic attacks."""
+        try:
+            ic.focus_window(self.hwnd)
+            follow = random.choice(['r', 't'])
+            ic.tap_key(follow)
+            self._last_attack = time.time()
+            logger.info(f"ActionPlanner: follow-up basic attack '{follow.upper()}' issued")
+        except Exception as e:
+            logger.error(f"ActionPlanner: failed to send follow-up attack: {e}")
+
     def set_enabled(self, enabled: bool):
         self.enabled = bool(enabled)
 
@@ -141,14 +152,6 @@ class ActionPlanner:
         candidates.sort(key=lambda x: (x[1], not x[3], x[2]))  # priority, not has_marker, distance
         
         return candidates[0][0]  # Return the closest mob with highest priority
-
-    def _find_health_for(self, target: Dict, detections: List[Dict]) -> Optional[Dict]:
-        # look for mob_combat_health that overlaps with target
-        for d in detections:
-            if str(d.get("class", "")).lower() == "mob_combat_health":
-                if _iou(target, d) > 0.05:
-                    return d
-        return None
 
     def _find_map_dots(self, detections: List[Dict]) -> List[Dict]:
         candidates = []
@@ -329,6 +332,23 @@ class ActionPlanner:
         # During COMBAT, perform R/T attacks at humanlike intervals
         if self._mode == 'combat':
             if time.time() < self._combat_until:
+                # Always fire ready combos/skills immediately when available
+                if (self.skill_combo_manager is not None
+                        and getattr(skill_combo_config, 'SKILL_COMBO_ENABLED', True)
+                        and getattr(skill_combo_config, 'COMBAT_USE_SKILLS', True)):
+                    try:
+                        has_health = True
+                        ready_combo = self.skill_combo_manager.has_ready_combo()
+                        ready_single = self.skill_combo_manager.has_available_single_skill()
+                        if ready_combo or ready_single:
+                            mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
+                            if mode != 'standard_attack' and success:
+                                logger.info(f"ActionPlanner(COMBAT): auto-fired '{mode}' on cooldown")
+                                self._send_follow_up_attack()
+                                return
+                    except Exception as e:
+                        logger.debug(f"ActionPlanner: immediate combo/skill attempt failed: {e}")
+
                 # Attack cadence - do R or T single presses
                 if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
                     ic.focus_window(self.hwnd)
@@ -343,20 +363,15 @@ class ActionPlanner:
                         if (self.skill_combo_manager is not None and scc is not None
                                 and getattr(scc, 'SKILL_COMBO_ENABLED', True)
                                 and getattr(scc, 'COMBAT_USE_SKILLS', True)):
-                            # Determine whether the current locked target has a health bar
-                            has_health = False
-                            try:
-                                has_health = bool(self._find_health_for(self._current_target, detections))
-                            except Exception:
-                                has_health = False
+                            has_health = True
                             try:
                                 mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
                                 # If a skill/combo was executed (success True) and it wasn't a plain standard attack,
                                 # consider the action handled.
                                 if mode != 'standard_attack' and success:
                                     executed = True
-                                    self._last_attack = time.time()
                                     logger.info(f"ActionPlanner(COMBAT): executed '{mode}' against target")
+                                    self._send_follow_up_attack()
                             except Exception as e:
                                 logger.debug(f"SkillComboManager attempt failed: {e}")
 
@@ -458,14 +473,15 @@ class ActionPlanner:
         except Exception:
             scc = None
 
-        # Roam attempt sequence: try a few short forward+look-around cycles
+        # Roam attempt sequence: longer forward strides + deliberate 60° camera sweeps
         max_retries = 3
         try:
             for attempt in range(max_retries):
-                # Determine forward movement duration and swipe parameters per attempt
-                forward_sec = random.uniform(1.0, 2.5)
-                turn_dx = random.randint(120, 360)  # pixels to swipe
-                swipe_time = random.uniform(0.35, 1.0)
+                # Forward movement is extended (~5s) to cover more ground
+                forward_sec = random.uniform(4.6, 5.3)
+                # Camera turns are driven by a continuous 2.5s swipe
+                turn_duration = 3
+                turn_segments = 24
 
                 # move forward briefly to change position
                 try:
@@ -477,20 +493,25 @@ class ActionPlanner:
                 # tiny pause
                 time.sleep(random.uniform(0.08, 0.25))
 
-                # perform look-around: hold right mouse and swipe left or right
+                # perform look-around: hold right mouse and drag slowly left/right
                 try:
                     ic.focus_window(self.hwnd)
-                    dir_right = random.choice([True, False])
-                    dx = turn_dx if dir_right else -turn_dx
-                    # press and hold right mouse; abort roam if this fails
+                    # Alternate directions between attempts for broader coverage
+                    dir_right = (attempt % 2 == 0)
+                    direction = 1 if dir_right else -1
                     ic.hold_mouse_down('right')
                 except Exception as e:
                     logger.warning(f"ActionPlanner: hold_mouse_down failed during roam: {e}")
                     break
 
                 try:
-                    # perform relative mouse movement while held
-                    ic.move_mouse_by(dx, 0, duration=swipe_time, steps=12)
+                    segment_delay = turn_duration / max(1, turn_segments)
+                    for _ in range(turn_segments):
+                        # Human-like horizontal swipe with slight jitter
+                        step_dx = direction * random.randint(8, 14)
+                        step_dy = random.randint(-2, 2)
+                        ic.move_mouse_relative(step_dx, step_dy, steps=1, duration=segment_delay * 0.7)
+                        time.sleep(segment_delay * 0.3)
                 except Exception as e:
                     logger.debug(f"ActionPlanner(ROAM): move_mouse_by failed: {e}")
                 finally:
@@ -500,7 +521,7 @@ class ActionPlanner:
                         pass
 
                 # after each swipe, pause briefly to allow the detection loop to produce new frames
-                pause_after = random.uniform(0.25, 0.6)
+                pause_after = random.uniform(0.35, 0.6)
                 time.sleep(pause_after)
 
                 # Check if any monsters were detected since we started roaming
@@ -521,7 +542,7 @@ class ActionPlanner:
                     break
 
                 # small random pause between attempts
-                time.sleep(random.uniform(0.2, 0.6))
+                time.sleep(random.uniform(0.35, 0.6))
 
         finally:
             # Ensure roaming flag is cleared

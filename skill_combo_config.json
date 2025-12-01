@@ -1,32 +1,14 @@
 {
   "SKILL_COOLDOWNS": {
-    "f1": 10.0,
-    "f2": 12.0,
-    "f3": 15.0,
-    "f4": 8.0,
-    "f5": 20.0,
-    "f6": 18.0,
-    "f7": 25.0,
-    "f8": 30.0,
-    "f9": 15.0,
-    "1": 10.0,
-    "2": 12.0,
-    "3": 15.0,
-    "4": 8.0,
-    "5": 20.0,
-    "6": 18.0,
-    "7": 25.0,
-    "8": 30.0,
-    "9": 15.0
+    "1": 15.0,
+    "2": 15.0
   },
   "COMBO_SETS": [
     {
       "name": "Basic DPS Rotation",
       "skills": [
         "1",
-        "2",
-        "3",
-        "4"
+        "2"
       ],
       "cooldown": 60.0,
       "delay_between_skills": 0.5,
@@ -46,14 +28,9 @@
     "single_skill": 0.3,
     "combo_set": 0.2
   },
-  "REQUIRE_MOB_HEALTH_FOR_SKILLS": false,
   "SINGLE_SKILL_POOL": [
     "1",
-    "2",
-    "3",
-    "4",
-    "5",
-    "6"
+    "2"
   ],
   "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5,
   "COMBAT_USE_SKILLS": true,

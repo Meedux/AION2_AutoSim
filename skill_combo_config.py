@@ -85,7 +85,6 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "single_skill": 0.3,
         "combo_set": 0.2,
     },
-    "REQUIRE_MOB_HEALTH_FOR_SKILLS": False,
     "SINGLE_SKILL_POOL": ["1", "2", "3", "4", "5"],
     "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5,
     # When true, during combat the planner may use skills and combo sets
@@ -132,7 +131,7 @@ def _refresh_module_vars() -> None:
     global SKILL_COOLDOWNS, COMBO_SETS, DELAY_RANDOMIZATION, SKILL_COMBO_ENABLED
     global PRE_MACRO_FOCUS_ENABLED, PRE_MACRO_FOCUS_DELAY, INPUT_BACKEND, INPUT_DRY_RUN
     global COMBO_PRIORITY, STEALTH_ATTACK_MODE_ENABLED, ATTACK_MODE_WEIGHTS
-    global REQUIRE_MOB_HEALTH_FOR_SKILLS, SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
+    global SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
     global COMBAT_USE_SKILLS, ENABLE_ROAM, LANGUAGE
 
     # Normalize skill keys: strip any leading 'alt+' or 'ctrl+' and normalize to lowercase
@@ -177,7 +176,6 @@ def _refresh_module_vars() -> None:
     COMBO_PRIORITY = _config.get('COMBO_PRIORITY', None)
     STEALTH_ATTACK_MODE_ENABLED = bool(_config.get('STEALTH_ATTACK_MODE_ENABLED', True))
     ATTACK_MODE_WEIGHTS = _config.get('ATTACK_MODE_WEIGHTS', {})
-    REQUIRE_MOB_HEALTH_FOR_SKILLS = bool(_config.get('REQUIRE_MOB_HEALTH_FOR_SKILLS', False))
     SINGLE_SKILL_POOL = _config.get('SINGLE_SKILL_POOL', [])
     SINGLE_SKILL_GLOBAL_COOLDOWN = float(_config.get('SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5))
     COMBAT_USE_SKILLS = bool(_config.get('COMBAT_USE_SKILLS', True))

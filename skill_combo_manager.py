@@ -400,13 +400,10 @@ class SkillComboManager:
     def choose_actionable_mode(self, has_health: bool) -> str:
         """Choose an attack mode using weights but ensure it's actionable.
 
-        If health gating is enabled and has_health is False, returns 'standard_attack'.
-        Otherwise filters choices by readiness (available skills/ready combos). If no
-        weighted choice is actionable, falls back in this order: single_skill -> combo_set -> standard_attack,
-        preferring modes that are actually executable right now.
+        Filters choices by readiness (available skills/ready combos). If no weighted choice is actionable,
+        falls back in this order: single_skill -> combo_set -> standard_attack, preferring modes that are
+        executable at this moment.
         """
-        if skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS and not has_health:
-            return 'standard_attack'
 
         # Gather readiness
         single_ready = self.has_available_single_skill()
@@ -487,43 +484,37 @@ class SkillComboManager:
         """Try to execute an attack using stealth mode.
         
         Args:
-            has_health: Whether mob_combat_health is detected
+            has_health: Retained for compatibility; health detection no longer gates skill usage
         
         Returns:
             (attack_mode, success) tuple
             attack_mode: 'standard_attack', 'single_skill', or 'combo_set'
             success: True if action was taken
         """
-        # If health requirement enabled and no health detected, use standard attack only
-        if skill_combo_config.REQUIRE_MOB_HEALTH_FOR_SKILLS and not has_health:
-            logger.debug("No mob health detected - using standard attack only")
-            return ('standard_attack', True)
-        
-        # Choose attack mode (actionable)
-        mode = self.choose_actionable_mode(has_health)
-        
-        if mode == 'standard_attack':
-            # Standard keyboard-target attack (handled by caller) - Tab-target + R/T
-            logger.debug("Attack mode: Standard (Tab-target + R/T)")
-            return ('standard_attack', True)
-        
-        elif mode == 'single_skill':
-            # Execute single skill
-            logger.debug("Attack mode: Single skill")
-            success = self.execute_single_skill()
-            return ('single_skill', success)
-        
-        elif mode == 'combo_set':
-            # Try to execute a combo
-            logger.debug("Attack mode: Combo set")
-            # Prefer randomized selection among ready combos
-            success = self.try_execute_random_combo()
-            if not success and self.has_available_single_skill():
-                # Fallback to single skill if combo not available anymore
-                logger.debug("Combo not available, trying single skill fallback")
-                success = self.execute_single_skill()
-                return ('single_skill', success)
-            return ('combo_set', success)
-        
-        # Fallback to standard attack
-        return ('standard_attack', True)
+        # Always prioritise ready combos so they fire exactly on cooldown
+        if self.has_ready_combo():
+            logger.debug("Attempting combo execution (combo ready)")
+            if self.try_execute_combos():
+                return ('combo_set', True)
+
+        # If no combo fired, try a single skill next
+        if self.has_available_single_skill():
+            logger.debug("Attempting single skill execution (skill ready)")
+            if self.execute_single_skill():
+                return ('single_skill', True)
+
+        # Optional stealth weighting still allows additional attempts, but should not
+        # prevent combos/skills from running as soon as they are ready.
+        if skill_combo_config.STEALTH_ATTACK_MODE_ENABLED:
+            mode = self.choose_actionable_mode(has_health)
+            if mode == 'combo_set':
+                logger.debug("Weighted selection chose combo_set; attempting execution")
+                if self.try_execute_combos():
+                    return ('combo_set', True)
+            elif mode == 'single_skill':
+                logger.debug("Weighted selection chose single_skill; attempting execution")
+                if self.execute_single_skill():
+                    return ('single_skill', True)
+
+        # Nothing executed – fall back to standard attacks handled by the planner
+        return ('standard_attack', False)

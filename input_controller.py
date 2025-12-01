@@ -312,6 +312,34 @@ def move_mouse_by(dx: int, dy: int, duration: float = 0.2, steps: int = 8) -> bo
     return True
 
 
+def move_mouse_relative(dx: int, dy: int, *, steps: int = 1, duration: float = 0.0) -> bool:
+    """Move the mouse by relative deltas using the interception backend.
+
+    Designed for camera pans where absolute positioning is undesirable. Splits the
+    requested delta into incremental steps to create a smooth swipe. Positive `dx`
+    moves right, positive `dy` moves down.
+    """
+    if _is_dry_run():
+        logger.info(f"DRY_RUN: move_mouse_relative(dx={dx}, dy={dy}, steps={steps}, duration={duration})")
+        return True
+    if not _load_interception():
+        raise RuntimeError('Interception backend required but interception DLL/driver failed to load')
+    steps = max(1, int(steps))
+    step_delay = max(0.0, duration / steps) if duration > 0 else 0.0
+    rem_x = int(dx)
+    rem_y = int(dy)
+    for i in range(steps):
+        # distribute remainder to keep totals accurate
+        chunk_x = rem_x // (steps - i) if (steps - i) else rem_x
+        chunk_y = rem_y // (steps - i) if (steps - i) else rem_y
+        rem_x -= chunk_x
+        rem_y -= chunk_y
+        _interception_send_mouse_move(chunk_x, chunk_y)
+        if step_delay:
+            time.sleep(step_delay)
+    return True
+
+
 def double_click_at(x: int, y: int):
     return click_at(x, y, button='left', clicks=2, interval=0.08)
 
