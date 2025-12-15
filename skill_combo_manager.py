@@ -37,6 +37,9 @@ class SkillComboManager:
         
         # Single skill global cooldown tracker
         self._last_single_skill_use = 0.0
+
+        # Pack-awareness context
+        self._enemy_count = 0
         
         # Validate configuration on init
         if not skill_combo_config.validate_configuration():
@@ -252,13 +255,30 @@ class SkillComboManager:
         for combo in combos:
             combo_name = combo.get('name', 'unnamed')
             skills = combo.get('skills', [])
-            
+
+            # Pack-aware metadata
+            meta = {}
+            try:
+                meta = skill_combo_config.get_combo_metadata(combo_name)
+            except Exception:
+                meta = {}
+            # Allow inline combo fields to override
+            if 'type' in combo or 'min_enemy_count' in combo or 'save_for_pack' in combo or 'defensive' in combo:
+                meta = {**meta, **{k: combo.get(k) for k in ('type', 'min_enemy_count', 'save_for_pack', 'defensive') if combo.get(k) is not None}}
+
+            enemy_count = getattr(self, '_enemy_count', 0)
+            min_count = int(meta.get('min_enemy_count', 1))
+            save_for_pack = bool(meta.get('save_for_pack', False))
+            if enemy_count < min_count and save_for_pack:
+                logger.debug(f"Combo '{combo_name}' held for pack (needs {min_count}, have {enemy_count})")
+                continue
+
             # Check if combo cooldown is ready
             if not self.is_combo_ready(combo):
                 combo_cd_remaining = self.get_combo_cooldown_remaining(combo)
                 logger.debug(f"Combo '{combo_name}' on cooldown: {combo_cd_remaining:.1f}s remaining")
                 continue
-            
+
             # Check if all skills are ready
             if not self.are_all_skills_ready(skills):
                 # Find which skills are on cooldown
@@ -269,7 +289,7 @@ class SkillComboManager:
                         skills_on_cd.append(f"{skill}({cd_remaining:.1f}s)")
                 logger.debug(f"Combo '{combo_name}' waiting for skills: {', '.join(skills_on_cd)}")
                 continue
-            
+
             # Combo is ready! Execute it
             logger.info(f"⚡ Combo '{combo_name}' ready - executing!")
             return self.execute_combo(combo)
@@ -375,6 +395,12 @@ class SkillComboManager:
     def has_ready_combo(self) -> bool:
         """True if at least one enabled combo is fully ready now."""
         return len(self.get_ready_combos()) > 0
+
+    def set_enemy_count(self, count: int):
+        try:
+            self._enemy_count = max(0, int(count))
+        except Exception:
+            self._enemy_count = 0
     
     def choose_attack_mode(self) -> str:
         """Choose attack mode based on stealth configuration.
@@ -460,25 +486,81 @@ class SkillComboManager:
         if not skill_pool:
             # If pool is empty, use all configured skills
             skill_pool = list(skill_combo_config.SKILL_COOLDOWNS.keys())
-        
+
         # Filter to only skills that are off cooldown
         available_skills = [s for s in skill_pool if self.is_skill_ready(s)]
-        
+
         if not available_skills:
             logger.debug("No skills available in single skill pool")
             return False
-        
-        # Pick a random skill
-        skill = random.choice(available_skills)
-        
+
+        enemy_count = getattr(self, '_enemy_count', 0)
+
+        # Partition by metadata for pack-aware preference
+        preferred: List[str] = []
+        fallback: List[str] = []
+        for s in available_skills:
+            meta = skill_combo_config.get_skill_metadata(s)
+            min_count = int(meta.get('min_enemy_count', 1))
+            save_for_pack = bool(meta.get('save_for_pack', False))
+            skill_type = str(meta.get('type', 'single')).lower()
+
+            if enemy_count < min_count and save_for_pack:
+                # Skip if we should hold this for larger packs
+                continue
+
+            is_aoe = skill_type in ('aoe', 'cleave')
+            if enemy_count >= 2 and is_aoe:
+                preferred.append(s)
+            elif enemy_count < 2 and not is_aoe:
+                preferred.append(s)
+            else:
+                fallback.append(s)
+
+        candidate_pool = preferred if preferred else fallback
+        if not candidate_pool:
+            logger.debug("No skills match pack-aware constraints; using first available")
+            candidate_pool = available_skills
+
+        skill = random.choice(candidate_pool)
+
         logger.info(f"⚡ Single skill attack: {skill}")
-        
+
         # Execute the skill
         if self.execute_skill(skill):
             self._last_single_skill_use = time.time()
             return True
-        
+
         return False
+
+    def execute_defensive_skill(self) -> bool:
+        """Execute the first ready defensive skill that matches pack constraints.
+
+        Returns:
+            True if a defensive skill was executed.
+        """
+        enemy_count = getattr(self, '_enemy_count', 0)
+
+        defensive_skills = []
+        for skill, cd in skill_combo_config.SKILL_COOLDOWNS.items():
+            meta = skill_combo_config.get_skill_metadata(skill)
+            if not meta or not meta.get('defensive', False):
+                continue
+            min_count = int(meta.get('min_enemy_count', 1))
+            save_for_pack = bool(meta.get('save_for_pack', False))
+            if enemy_count < min_count and save_for_pack:
+                continue
+            if self.is_skill_ready(skill):
+                defensive_skills.append(skill)
+
+        if not defensive_skills:
+            return False
+
+        # Prefer the first ready defensive skill (deterministic ordering by name for stability)
+        defensive_skills.sort()
+        chosen = defensive_skills[0]
+        logger.info(f"🛡️ Defensive skill: {chosen}")
+        return self.execute_skill(chosen)
     
     def try_stealth_attack(self, has_health: bool) -> Tuple[str, bool]:
         """Try to execute an attack using stealth mode.
@@ -491,15 +573,17 @@ class SkillComboManager:
             attack_mode: 'standard_attack', 'single_skill', or 'combo_set'
             success: True if action was taken
         """
-        # Always prioritise ready combos so they fire exactly on cooldown
+        enemy_count = getattr(self, '_enemy_count', 0)
+
+        # Always prioritise ready combos so they fire exactly on cooldown, pack-aware
         if self.has_ready_combo():
             logger.debug("Attempting combo execution (combo ready)")
             if self.try_execute_combos():
                 return ('combo_set', True)
 
-        # If no combo fired, try a single skill next
+        # If no combo fired, try a single skill next (pack-aware filtering inside)
         if self.has_available_single_skill():
-            logger.debug("Attempting single skill execution (skill ready)")
+            logger.debug(f"Attempting single skill execution (skill ready, enemies={enemy_count})")
             if self.execute_single_skill():
                 return ('single_skill', True)
 

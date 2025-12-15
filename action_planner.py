@@ -89,6 +89,8 @@ class ActionPlanner:
         self._no_mobs_threshold = 5
         # store last detections so roaming thread can re-check for monsters
         self._last_detections: List[Dict] = []
+        # defensive cadence guard
+        self._last_defensive_time = 0.0
 
     def _send_follow_up_attack(self):
         """Fire a light/heavy attack so the character resumes basic attacks."""
@@ -268,9 +270,22 @@ class ActionPlanner:
 
         left, top, w, h = window_rect
 
-        # Global cooldown behavior: if in cooldown mode, randomly press F during the cooldown window
+        # 1) New MONSTER targeting + combat state-machine
+        mobs = self._find_all_monsters(detections)
+        enemy_count = len(mobs)
+        try:
+            if self.skill_combo_manager:
+                self.skill_combo_manager.set_enemy_count(enemy_count)
+        except Exception:
+            pass
+
+        # Exit cooldown early if new enemies appear
         if self._mode == 'cooldown':
-            if time.time() < self._cooldown_until:
+            if enemy_count > 0:
+                self._mode = 'scanning'
+                self._current_target = None
+                logger.info("ActionPlanner: enemies appeared, exiting cooldown to retarget")
+            elif time.time() < self._cooldown_until:
                 # schedule random F presses during cooldown
                 if time.time() - self._last_cooldown_action >= random.uniform(*self._cooldown_f_interval):
                     try:
@@ -286,9 +301,6 @@ class ActionPlanner:
                 self._mode = 'scanning'
                 self._current_target = None
                 logger.info("ActionPlanner: cooldown finished, back to scanning")
-
-        # 1) New MONSTER targeting + combat state-machine
-        mobs = self._find_all_monsters(detections)
 
         # SCANNING: detect mobs and acquire a target
         if self._mode == 'scanning':
@@ -329,9 +341,30 @@ class ActionPlanner:
                 logger.info(f"ActionPlanner: entering COMBAT mode for {dur:.1f}s")
                 return
 
+        # If in combat but lost the target while others remain, re-enter scanning to retarget
+        if self._mode == 'combat' and self._current_target is not None:
+            target_still_visible = any(_iou(self._current_target, m) > 0.05 for m in mobs)
+            if not target_still_visible and enemy_count > 0:
+                logger.info("ActionPlanner: lost target during combat, reacquiring")
+                self._mode = 'scanning'
+                self._current_target = None
+
         # During COMBAT, perform R/T attacks at humanlike intervals
         if self._mode == 'combat':
             if time.time() < self._combat_until:
+                # Defensive trigger if outnumbered
+                try:
+                    import skill_combo_config as scc
+                    outnumbered_thresh = getattr(scc, 'OUTNUMBERED_THRESHOLD', 3)
+                    defensive_cooldown = getattr(scc, 'DEFENSIVE_COOLDOWN_SEC', 8.0)
+                    if enemy_count >= outnumbered_thresh and (time.time() - self._last_defensive_time) >= defensive_cooldown:
+                        if self.skill_combo_manager and self.skill_combo_manager.execute_defensive_skill():
+                            self._last_defensive_time = time.time()
+                            self._send_follow_up_attack()
+                            return
+                except Exception:
+                    pass
+
                 # Always fire ready combos/skills immediately when available
                 if (self.skill_combo_manager is not None
                         and getattr(skill_combo_config, 'SKILL_COMBO_ENABLED', True)
@@ -363,15 +396,29 @@ class ActionPlanner:
                         if (self.skill_combo_manager is not None and scc is not None
                                 and getattr(scc, 'SKILL_COMBO_ENABLED', True)
                                 and getattr(scc, 'COMBAT_USE_SKILLS', True)):
+                            force_mode = str(getattr(scc, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')).lower().strip()
                             has_health = True
                             try:
+                                ready_combo = self.skill_combo_manager.has_ready_combo()
+                                ready_single = self.skill_combo_manager.has_available_single_skill()
+
                                 mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
-                                # If a skill/combo was executed (success True) and it wasn't a plain standard attack,
-                                # consider the action handled.
                                 if mode != 'standard_attack' and success:
                                     executed = True
                                     logger.info(f"ActionPlanner(COMBAT): executed '{mode}' against target")
                                     self._send_follow_up_attack()
+                                else:
+                                    # Force a skill before standard attack depending on configured mode
+                                    if force_mode != 'disabled' and (ready_single or ready_combo):
+                                        if ready_single and self.skill_combo_manager.execute_single_skill():
+                                            executed = True
+                                            logger.info("ActionPlanner(COMBAT): forced single skill before standard attack")
+                                            self._send_follow_up_attack()
+                                        elif force_mode == 'always' and ready_combo:
+                                            if self.skill_combo_manager.try_execute_combos():
+                                                executed = True
+                                                logger.info("ActionPlanner(COMBAT): forced combo before standard attack")
+                                                self._send_follow_up_attack()
                             except Exception as e:
                                 logger.debug(f"SkillComboManager attempt failed: {e}")
 
@@ -385,11 +432,16 @@ class ActionPlanner:
                         logger.error(f"ActionPlanner(COMBAT): attack press failed: {e}")
                 return
             else:
-                # combat period ended -> go to cooldown
+                # combat period ended -> if enemies remain, extend; otherwise cooldown
+                if enemy_count > 0:
+                    extra = max(2.0, min(5.0, 3.0 + 0.5 * enemy_count))
+                    self._combat_until = time.time() + extra
+                    logger.info(f"ActionPlanner: enemies still present, extending combat by {extra:.1f}s")
+                    return
                 self._mode = 'cooldown'
-                self._cooldown_until = time.time() + 5.0
+                self._cooldown_until = time.time() + 2.0
                 self._last_cooldown_action = 0.0
-                logger.info("ActionPlanner: combat finished, entering 5s cooldown (F spam)")
+                logger.info("ActionPlanner: combat finished, entering 2s cooldown (F spam)")
                 return
 
         # If we had a locked target (we were attacking), but now no monster target found,

@@ -94,6 +94,19 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     # When true, the planner will perform idle roaming: move forward and look around
     # when no monsters are detected. Toggleable in the UI.
     "ENABLE_ROAM": True,
+    # Mode for forcing a skill before falling back to standard attacks:
+    #   'ready_only' (default): force a skill if one is ready
+    #   'always': always try to force when any skill/comb is ready
+    #   'disabled': never force (use standard attack path)
+    "FORCE_SKILL_BEFORE_STANDARD_MODE": "ready_only",
+        # Skill metadata for pack-aware logic (per-skill overrides)
+        # Example entry: "2": {"type": "aoe", "min_enemy_count": 3, "save_for_pack": True, "defensive": False}
+        "SKILL_METADATA": {},
+        # Combo metadata for pack-aware logic (per-combo overrides; same fields as SKILL_METADATA)
+        "COMBO_METADATA": {},
+        # Pack-aware thresholds
+        "OUTNUMBERED_THRESHOLD": 3,
+        "DEFENSIVE_COOLDOWN_SEC": 8.0,
     "LANGUAGE": "en",
 }
 
@@ -132,7 +145,8 @@ def _refresh_module_vars() -> None:
     global PRE_MACRO_FOCUS_ENABLED, PRE_MACRO_FOCUS_DELAY, INPUT_BACKEND, INPUT_DRY_RUN
     global COMBO_PRIORITY, STEALTH_ATTACK_MODE_ENABLED, ATTACK_MODE_WEIGHTS
     global SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
-    global COMBAT_USE_SKILLS, ENABLE_ROAM, LANGUAGE
+    global COMBAT_USE_SKILLS, ENABLE_ROAM, LANGUAGE, FORCE_SKILL_BEFORE_STANDARD_MODE
+        global SKILL_METADATA, COMBO_METADATA, OUTNUMBERED_THRESHOLD, DEFENSIVE_COOLDOWN_SEC
 
     # Normalize skill keys: strip any leading 'alt+' or 'ctrl+' and normalize to lowercase
     raw_skills = _config.get('SKILL_COOLDOWNS', {}) or {}
@@ -180,7 +194,20 @@ def _refresh_module_vars() -> None:
     SINGLE_SKILL_GLOBAL_COOLDOWN = float(_config.get('SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5))
     COMBAT_USE_SKILLS = bool(_config.get('COMBAT_USE_SKILLS', True))
     ENABLE_ROAM = bool(_config.get('ENABLE_ROAM', True))
+    FORCE_SKILL_BEFORE_STANDARD_MODE = _config.get('FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')
+        SKILL_METADATA = _config.get('SKILL_METADATA', {}) or {}
+        COMBO_METADATA = _config.get('COMBO_METADATA', {}) or {}
+        OUTNUMBERED_THRESHOLD = int(_config.get('OUTNUMBERED_THRESHOLD', 3))
+        DEFENSIVE_COOLDOWN_SEC = float(_config.get('DEFENSIVE_COOLDOWN_SEC', 8.0))
     LANGUAGE = _config.get('LANGUAGE', 'en')
+
+
+    def get_skill_metadata(skill: str) -> Dict[str, Any]:
+        return SKILL_METADATA.get(str(skill).lower(), {}) if isinstance(SKILL_METADATA, dict) else {}
+
+
+    def get_combo_metadata(combo_name: str) -> Dict[str, Any]:
+        return COMBO_METADATA.get(str(combo_name), {}) if isinstance(COMBO_METADATA, dict) else {}
 
 
 _refresh_module_vars()

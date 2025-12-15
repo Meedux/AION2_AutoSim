@@ -40,7 +40,23 @@ TRANSLATIONS = {
         'label_standard_weight': 'Standard Attack Weight (Tab-target):',
         'label_single_weight': 'Single Skill Weight:',
         'label_combo_weight': 'Combo Set Weight:',
+        'label_force_skill_mode': 'Force Skill Before Standard:',
+        'force_mode_ready_only': 'Ready-only',
+        'force_mode_always': 'Always',
+        'force_mode_disabled': 'Disabled',
         'checkbox_combat_skills': 'Enable skills & combos during combat',
+        'label_outnumbered_threshold': 'Outnumbered threshold (enemies):',
+        'label_defensive_cooldown': 'Defensive reuse (sec):',
+        'group_skill_metadata': 'Skill Metadata',
+        'label_skill_type': 'Skill type:',
+        'skill_type_single': 'Single',
+        'skill_type_cleave': 'Cleave',
+        'skill_type_aoe': 'AOE',
+        'label_min_enemy_count': 'Min enemy count:',
+        'checkbox_save_for_pack': 'Save for pack',
+        'checkbox_defensive_skill': 'Defensive skill',
+        'group_combo_metadata': 'Combo Metadata',
+        'label_combo_type': 'Combo type:',
         'button_edit_skills': '⚙️ Edit Individual Skills',
         'button_edit_combos': '🎯 Edit Combo Sets',
         'button_start': 'Start',
@@ -214,7 +230,23 @@ TRANSLATIONS = {
         'label_standard_weight': '일반 공격 가중치 (탭 타겟):',
         'label_single_weight': '단일 스킬 가중치:',
         'label_combo_weight': '콤보 세트 가중치:',
+        'label_force_skill_mode': '일반 공격 전 스킬 강제:',
+        'force_mode_ready_only': '준비 시만',
+        'force_mode_always': '항상',
+        'force_mode_disabled': '사용 안 함',
         'checkbox_combat_skills': '전투 중 스킬 & 콤보 사용',
+        'label_outnumbered_threshold': '열세 기준 (적 수):',
+        'label_defensive_cooldown': '방어 재사용 (초):',
+        'group_skill_metadata': '스킬 메타데이터',
+        'label_skill_type': '스킬 유형:',
+        'skill_type_single': '단일',
+        'skill_type_cleave': '광역(휘두르기)',
+        'skill_type_aoe': '광역(AOE)',
+        'label_min_enemy_count': '최소 적 수:',
+        'checkbox_save_for_pack': '무리에서만 사용',
+        'checkbox_defensive_skill': '방어 스킬',
+        'group_combo_metadata': '콤보 메타데이터',
+        'label_combo_type': '콤보 유형:',
         'button_edit_skills': '⚙️ 개별 스킬 편집',
         'button_edit_combos': '🎯 콤보 세트 편집',
         'button_start': '시작',
@@ -625,6 +657,24 @@ class MainWindow(QtWidgets.QMainWindow):
         weights_layout.addRow(label_combo_weight, self.combo_set_weight)
         
         skill_layout.addLayout(weights_layout)
+
+        # Force-skill mode selector
+        force_row = QtWidgets.QHBoxLayout()
+        force_label = QtWidgets.QLabel(self.tr('label_force_skill_mode'))
+        self._register_translatable(force_label.setText, 'label_force_skill_mode')
+        self.force_skill_mode_combo = QtWidgets.QComboBox()
+        self.force_skill_mode_combo.addItem(self.tr('force_mode_ready_only'), 'ready_only')
+        self.force_skill_mode_combo.addItem(self.tr('force_mode_always'), 'always')
+        self.force_skill_mode_combo.addItem(self.tr('force_mode_disabled'), 'disabled')
+        current_force = getattr(skill_combo_config, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')
+        idx_force = self.force_skill_mode_combo.findData(str(current_force))
+        if idx_force >= 0:
+            self.force_skill_mode_combo.setCurrentIndex(idx_force)
+        self.force_skill_mode_combo.currentIndexChanged.connect(self._update_skill_config)
+        force_row.addWidget(force_label)
+        force_row.addWidget(self.force_skill_mode_combo)
+        force_row.addStretch()
+        skill_layout.addLayout(force_row)
         
         # Combat skills & combos toggle
         self.combat_skills_cb = QtWidgets.QCheckBox()
@@ -634,6 +684,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.combat_skills_cb.setChecked(getattr(skill_combo_config, 'COMBAT_USE_SKILLS', True))
         self.combat_skills_cb.stateChanged.connect(self._update_skill_config)
         skill_layout.addWidget(self.combat_skills_cb)
+
+        # Pack-aware defensive settings
+        pack_form = QtWidgets.QFormLayout()
+        self.outnumbered_spin = QtWidgets.QSpinBox()
+        self.outnumbered_spin.setRange(1, 20)
+        self.outnumbered_spin.setValue(getattr(skill_combo_config, 'OUTNUMBERED_THRESHOLD', 3))
+        self.outnumbered_spin.valueChanged.connect(self._update_skill_config)
+        lbl_outnum = QtWidgets.QLabel(self.tr('label_outnumbered_threshold'))
+        self._register_translatable(lbl_outnum.setText, 'label_outnumbered_threshold')
+        pack_form.addRow(lbl_outnum, self.outnumbered_spin)
+
+        self.defensive_cd_spin = QtWidgets.QDoubleSpinBox()
+        self.defensive_cd_spin.setRange(0.0, 60.0)
+        self.defensive_cd_spin.setSingleStep(0.5)
+        self.defensive_cd_spin.setDecimals(1)
+        self.defensive_cd_spin.setValue(getattr(skill_combo_config, 'DEFENSIVE_COOLDOWN_SEC', 8.0))
+        self.defensive_cd_spin.valueChanged.connect(self._update_skill_config)
+        lbl_defcd = QtWidgets.QLabel(self.tr('label_defensive_cooldown'))
+        self._register_translatable(lbl_defcd.setText, 'label_defensive_cooldown')
+        pack_form.addRow(lbl_defcd, self.defensive_cd_spin)
+
+        skill_layout.addLayout(pack_form)
         
         # Configuration buttons in a horizontal layout
         config_buttons_layout = QtWidgets.QHBoxLayout()
@@ -960,6 +1032,24 @@ class MainWindow(QtWidgets.QMainWindow):
             skill_combo_config.STEALTH_ATTACK_MODE_ENABLED = self.stealth_attack_cb.isChecked()
             # Update combat skill usage toggle
             skill_combo_config.COMBAT_USE_SKILLS = self.combat_skills_cb.isChecked()
+
+            # Force-skill mode
+            try:
+                mode_data = self.force_skill_mode_combo.currentData()
+            except Exception:
+                mode_data = None
+            if mode_data:
+                skill_combo_config.FORCE_SKILL_BEFORE_STANDARD_MODE = str(mode_data)
+
+            # Pack-aware thresholds
+            try:
+                skill_combo_config.OUTNUMBERED_THRESHOLD = int(self.outnumbered_spin.value())
+            except Exception:
+                pass
+            try:
+                skill_combo_config.DEFENSIVE_COOLDOWN_SEC = float(self.defensive_cd_spin.value())
+            except Exception:
+                pass
             
             # Update attack mode weights
             skill_combo_config.ATTACK_MODE_WEIGHTS['standard_attack'] = self.standard_attack_weight.value()
@@ -973,6 +1063,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     'STEALTH_ATTACK_MODE_ENABLED': skill_combo_config.STEALTH_ATTACK_MODE_ENABLED,
                     'ATTACK_MODE_WEIGHTS': skill_combo_config.ATTACK_MODE_WEIGHTS,
                     'COMBAT_USE_SKILLS': skill_combo_config.COMBAT_USE_SKILLS,
+                    'FORCE_SKILL_BEFORE_STANDARD_MODE': skill_combo_config.FORCE_SKILL_BEFORE_STANDARD_MODE,
+                    'OUTNUMBERED_THRESHOLD': skill_combo_config.OUTNUMBERED_THRESHOLD,
+                    'DEFENSIVE_COOLDOWN_SEC': skill_combo_config.DEFENSIVE_COOLDOWN_SEC,
                 })
             except Exception as e:
                 self.log(f"Failed to persist skill config to JSON: {e}")
@@ -1536,9 +1629,12 @@ class SkillEditorScreen(QtWidgets.QWidget):
         self.setMinimumSize(720, 520)
         self._language = self._resolve_language()
         self._pool_guard = False
+        self._selected_skill_key = None
+        self._meta_guard = False
 
         import skill_combo_config
         self.config = skill_combo_config
+        self._skill_metadata = dict(getattr(self.config, 'SKILL_METADATA', {}) or {})
 
         root_layout = QtWidgets.QVBoxLayout(self)
         root_layout.setContentsMargins(16, 16, 16, 16)
@@ -1610,6 +1706,7 @@ class SkillEditorScreen(QtWidgets.QWidget):
         self.skill_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self.skill_table.setAlternatingRowColors(True)
         self.skill_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.skill_table.currentCellChanged.connect(self._on_skill_selection_changed)
         cooldown_group_layout.addWidget(self.skill_table)
 
         table_btn_row = QtWidgets.QHBoxLayout()
@@ -1691,6 +1788,32 @@ class SkillEditorScreen(QtWidgets.QWidget):
         timing_layout.addStretch()
         self.timing_group.setLayout(timing_layout)
         right_layout.addWidget(self.timing_group)
+
+        # Skill metadata group
+        self.meta_group = QtWidgets.QGroupBox()
+        meta_form = QtWidgets.QFormLayout()
+        self.skill_type_combo = QtWidgets.QComboBox()
+        self.skill_type_combo.addItem(self._t('skill_type_single'), 'single')
+        self.skill_type_combo.addItem(self._t('skill_type_cleave'), 'cleave')
+        self.skill_type_combo.addItem(self._t('skill_type_aoe'), 'aoe')
+        self.skill_type_combo.currentIndexChanged.connect(self._persist_meta_from_ui)
+
+        self.min_enemy_spin = QtWidgets.QSpinBox()
+        self.min_enemy_spin.setRange(1, 20)
+        self.min_enemy_spin.valueChanged.connect(self._persist_meta_from_ui)
+
+        self.save_for_pack_cb = QtWidgets.QCheckBox()
+        self.save_for_pack_cb.stateChanged.connect(self._persist_meta_from_ui)
+
+        self.defensive_cb = QtWidgets.QCheckBox()
+        self.defensive_cb.stateChanged.connect(self._persist_meta_from_ui)
+
+        meta_form.addRow(self._t('label_skill_type'), self.skill_type_combo)
+        meta_form.addRow(self._t('label_min_enemy_count'), self.min_enemy_spin)
+        meta_form.addRow(self._t('checkbox_save_for_pack'), self.save_for_pack_cb)
+        meta_form.addRow(self._t('checkbox_defensive_skill'), self.defensive_cb)
+        self.meta_group.setLayout(meta_form)
+        right_layout.addWidget(self.meta_group)
 
         right_layout.addStretch()
 
@@ -1926,6 +2049,15 @@ class SkillEditorScreen(QtWidgets.QWidget):
         self.hint_label.setText(self._t('trailing_hint_skill_pool'))
         self.timing_group.setTitle(self._t('group_skill_timing'))
         self.gcd_label.setText(self._t('label_single_skill_gcd'))
+        self.meta_group.setTitle(self._t('group_skill_metadata'))
+        self.skill_type_combo.setItemText(0, self._t('skill_type_single'))
+        self.skill_type_combo.setItemText(1, self._t('skill_type_cleave'))
+        self.skill_type_combo.setItemText(2, self._t('skill_type_aoe'))
+        self.min_enemy_spin.setPrefix('')
+        self.meta_group.layout().labelForField(self.skill_type_combo).setText(self._t('label_skill_type'))
+        self.meta_group.layout().labelForField(self.min_enemy_spin).setText(self._t('label_min_enemy_count'))
+        self.save_for_pack_cb.setText(self._t('checkbox_save_for_pack'))
+        self.defensive_cb.setText(self._t('checkbox_defensive_skill'))
         self.save_btn.setText(self._t('button_save_changes'))
         self.cancel_btn.setText(self._t('button_cancel'))
         self.total_skills_caption.setText(self._t('skill_summary_total'))
@@ -1943,6 +2075,42 @@ class SkillEditorScreen(QtWidgets.QWidget):
             if isinstance(spin, QtWidgets.QDoubleSpinBox):
                 spin.setSuffix(suffix)
 
+    def _current_selected_skill_key(self) -> str:
+        row = self.skill_table.currentRow()
+        if row < 0:
+            return ''
+        item = self.skill_table.item(row, 0)
+        return item.text().strip() if item else ''
+
+    def _load_meta_into_ui(self, key: str):
+        self._meta_guard = True
+        meta = self._skill_metadata.get(key, {}) if key else {}
+        m_type = str(meta.get('type', 'single')).lower()
+        idx = self.skill_type_combo.findData(m_type)
+        self.skill_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.min_enemy_spin.setValue(int(meta.get('min_enemy_count', 1)))
+        self.save_for_pack_cb.setChecked(bool(meta.get('save_for_pack', False)))
+        self.defensive_cb.setChecked(bool(meta.get('defensive', False)))
+        self._meta_guard = False
+
+    def _persist_meta_from_ui(self):
+        if self._meta_guard:
+            return
+        key = self._current_selected_skill_key()
+        if not key:
+            return
+        meta = self._skill_metadata.get(key, {}).copy()
+        meta['type'] = self.skill_type_combo.currentData() or 'single'
+        meta['min_enemy_count'] = int(self.min_enemy_spin.value())
+        meta['save_for_pack'] = bool(self.save_for_pack_cb.isChecked())
+        meta['defensive'] = bool(self.defensive_cb.isChecked())
+        self._skill_metadata[key] = meta
+
+    def _on_skill_selection_changed(self, currentRow, currentColumn, previousRow, previousColumn):
+        key = self._current_selected_skill_key()
+        self._selected_skill_key = key
+        self._load_meta_into_ui(key)
+
     def _resolve_language(self) -> str:
         parent = self.parent()
         while parent is not None and not hasattr(parent, 'current_language'):
@@ -1951,6 +2119,15 @@ class SkillEditorScreen(QtWidgets.QWidget):
 
     def _t(self, key: str, **kwargs) -> str:
         return translate_text(getattr(self, '_language', 'en'), key, **kwargs)
+
+    def _persist_combo_meta(self):
+        if not self._current_combo_name:
+            return
+        meta = self._combo_metadata.get(self._current_combo_name, {}).copy()
+        meta['type'] = self.combo_type_combo.currentData() or 'single'
+        meta['min_enemy_count'] = int(self.combo_min_enemy_spin.value())
+        meta['save_for_pack'] = bool(self.combo_save_pack_cb.isChecked())
+        self._combo_metadata[self._current_combo_name] = meta
 
     def _add_skill(self):
         capture_dialog = KeybindCaptureDialog(self)
@@ -1984,6 +2161,11 @@ class SkillEditorScreen(QtWidgets.QWidget):
     def _remove_skill(self):
         current_row = self.skill_table.currentRow()
         if current_row >= 0:
+            key_item = self.skill_table.item(current_row, 0)
+            if key_item:
+                key = key_item.text().strip()
+                if key in self._skill_metadata:
+                    self._skill_metadata.pop(key, None)
             self.skill_table.removeRow(current_row)
             self._update_stats()
 
@@ -2158,6 +2340,7 @@ class SkillEditorScreen(QtWidgets.QWidget):
             'SINGLE_SKILL_POOL': new_pool,
             'SINGLE_SKILL_GLOBAL_COOLDOWN': self.gcd_spin.value(),
             'SKILL_COOLDOWNS': new_cooldowns,
+            'SKILL_METADATA': {k: v for k, v in self._skill_metadata.items() if k in new_cooldowns},
         }
 
         try:
@@ -2206,6 +2389,8 @@ class ComboEditorScreen(QtWidgets.QWidget):
         import skill_combo_config
         self.config = skill_combo_config
         self._language = self._resolve_language()
+        self._combo_metadata = dict(getattr(self.config, 'COMBO_METADATA', {}) or {})
+        self._current_combo_name = ''
 
         layout = QtWidgets.QVBoxLayout(self)
 
@@ -2279,6 +2464,28 @@ class ComboEditorScreen(QtWidgets.QWidget):
         delay_layout.addWidget(self.combo_delay_spin)
         delay_layout.addStretch()
         right_layout.addLayout(delay_layout)
+
+        # Combo metadata
+        self.combo_meta_group = QtWidgets.QGroupBox()
+        combo_meta_form = QtWidgets.QFormLayout()
+        self.combo_type_combo = QtWidgets.QComboBox()
+        self.combo_type_combo.addItem(self._t('skill_type_single'), 'single')
+        self.combo_type_combo.addItem(self._t('skill_type_cleave'), 'cleave')
+        self.combo_type_combo.addItem(self._t('skill_type_aoe'), 'aoe')
+        self.combo_type_combo.currentIndexChanged.connect(self._persist_combo_meta)
+
+        self.combo_min_enemy_spin = QtWidgets.QSpinBox()
+        self.combo_min_enemy_spin.setRange(1, 20)
+        self.combo_min_enemy_spin.valueChanged.connect(self._persist_combo_meta)
+
+        self.combo_save_pack_cb = QtWidgets.QCheckBox()
+        self.combo_save_pack_cb.stateChanged.connect(self._persist_combo_meta)
+
+        combo_meta_form.addRow(self._t('label_combo_type'), self.combo_type_combo)
+        combo_meta_form.addRow(self._t('label_min_enemy_count'), self.combo_min_enemy_spin)
+        combo_meta_form.addRow(self._t('checkbox_save_for_pack'), self.combo_save_pack_cb)
+        self.combo_meta_group.setLayout(combo_meta_form)
+        right_layout.addWidget(self.combo_meta_group)
         
         # Skills list
         skills_label_layout = QtWidgets.QHBoxLayout()
@@ -2334,6 +2541,13 @@ class ComboEditorScreen(QtWidgets.QWidget):
         self.combo_enabled_cb.setText(self._t('checkbox_combo_enabled'))
         self.combo_cooldown_label.setText(self._t('label_combo_cooldown'))
         self.combo_delay_label.setText(self._t('label_combo_delay'))
+        self.combo_meta_group.setTitle(self._t('group_combo_metadata'))
+        self.combo_meta_group.layout().labelForField(self.combo_type_combo).setText(self._t('label_combo_type'))
+        self.combo_type_combo.setItemText(0, self._t('skill_type_single'))
+        self.combo_type_combo.setItemText(1, self._t('skill_type_cleave'))
+        self.combo_type_combo.setItemText(2, self._t('skill_type_aoe'))
+        self.combo_meta_group.layout().labelForField(self.combo_min_enemy_spin).setText(self._t('label_min_enemy_count'))
+        self.combo_save_pack_cb.setText(self._t('checkbox_save_for_pack'))
         self.skills_label.setText(self._t('label_combo_skills'))
         self.add_skill_btn.setText(self._t('button_add_skill_to_combo'))
         self.save_combo_btn.setText(self._t('button_save_combo'))
@@ -2361,12 +2575,26 @@ class ComboEditorScreen(QtWidgets.QWidget):
         
         self.current_combo_index = row
         combo = self.config.COMBO_SETS[row]
+        self._current_combo_name = combo.get('name', '')
         
         self.combo_name_edit.setText(combo['name'])
         self.combo_enabled_cb.setChecked(combo.get('enabled', True))
         self.combo_cooldown_spin.setValue(combo.get('cooldown', 60.0))
         self.combo_delay_spin.setValue(combo.get('delay_between_skills', 0.5))
         self.combo_skills_edit.setPlainText("\n".join(combo.get('skills', [])))
+
+        meta = self._combo_metadata.get(self._current_combo_name, {}) if self._current_combo_name else {}
+        m_type = str(meta.get('type', 'single')).lower()
+        idx = self.combo_type_combo.findData(m_type)
+        self.combo_type_combo.blockSignals(True)
+        self.combo_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.combo_type_combo.blockSignals(False)
+        self.combo_min_enemy_spin.blockSignals(True)
+        self.combo_min_enemy_spin.setValue(int(meta.get('min_enemy_count', 1)))
+        self.combo_min_enemy_spin.blockSignals(False)
+        self.combo_save_pack_cb.blockSignals(True)
+        self.combo_save_pack_cb.setChecked(bool(meta.get('save_for_pack', False)))
+        self.combo_save_pack_cb.blockSignals(False)
     
     def _new_combo(self):
         """Create a new combo set."""
@@ -2379,7 +2607,7 @@ class ComboEditorScreen(QtWidgets.QWidget):
         }
         new_combos = list(self.config.COMBO_SETS) + [new_combo]
         try:
-            self.config.update_config({'COMBO_SETS': new_combos})
+            self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
         except Exception as e:
             logger.error(f"Failed to persist combo config to JSON: {e}")
             QtWidgets.QMessageBox.warning(
@@ -2408,9 +2636,11 @@ class ComboEditorScreen(QtWidgets.QWidget):
             
             if reply == QtWidgets.QMessageBox.Yes:
                 new_combos = list(self.config.COMBO_SETS)
+                if combo_name in self._combo_metadata:
+                    self._combo_metadata.pop(combo_name, None)
                 del new_combos[current_row]
                 try:
-                    self.config.update_config({'COMBO_SETS': new_combos})
+                    self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
                 except Exception as e:
                     logger.error(f"Failed to persist combo config to JSON: {e}")
                     QtWidgets.QMessageBox.warning(
@@ -2440,7 +2670,8 @@ class ComboEditorScreen(QtWidgets.QWidget):
         """Save current combo details."""
         if self.current_combo_index < 0 or self.current_combo_index >= len(self.config.COMBO_SETS):
             return
-        
+        old_name = self.config.COMBO_SETS[self.current_combo_index].get('name', '')
+
         combo = dict(self.config.COMBO_SETS[self.current_combo_index])
         combo['name'] = self.combo_name_edit.text().strip() or self._t('default_combo_name', index=self.current_combo_index + 1)
         combo['enabled'] = self.combo_enabled_cb.isChecked()
@@ -2452,8 +2683,17 @@ class ComboEditorScreen(QtWidgets.QWidget):
 
         new_combos = list(self.config.COMBO_SETS)
         new_combos[self.current_combo_index] = combo
+
+        # Update combo metadata (handle rename)
+        meta = self._combo_metadata.pop(old_name, {}) if old_name else {}
+        meta = meta or {}
+        meta['type'] = self.combo_type_combo.currentData() or 'single'
+        meta['min_enemy_count'] = int(self.combo_min_enemy_spin.value())
+        meta['save_for_pack'] = bool(self.combo_save_pack_cb.isChecked())
+        if combo['name']:
+            self._combo_metadata[combo['name']] = meta
         try:
-            self.config.update_config({'COMBO_SETS': new_combos})
+            self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
         except Exception as e:
             logger.error(f"Failed to persist combo config to JSON: {e}")
             QtWidgets.QMessageBox.warning(

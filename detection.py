@@ -19,11 +19,18 @@ class DetectionController:
         self.overlay_update = overlay_update
         self.log = log_fn
         # Default FPS (no stealth behavior). Higher default for more real-time overlay updates.
-        self.fps = fps if fps is not None else 30
+        # fps=None or fps<=0 means "no throttle" (run as fast as possible)
+        self.fps = fps if fps is not None else None
 
         # keep capture at original size (no forced resize) to preserve mapping accuracy;
         # we'll make a resized copy for the model if needed inside the model client.
-        self.capture = CaptureWorker(hwnd=hwnd, target_fps=max(5, self.fps * 2), resize_max=None)
+        cap_target_fps = 0
+        try:
+            if self.fps is not None and self.fps > 0:
+                cap_target_fps = max(5, int(self.fps * 2))
+        except Exception:
+            cap_target_fps = 0
+        self.capture = CaptureWorker(hwnd=hwnd, target_fps=cap_target_fps, resize_max=None)
         # local model uses models/aion.pt in repo
         self.client = LocalModelClient(weights_path="models/aion.pt")
         # action planner will perform input actions (Tab-target + R/T attacks / movement)
@@ -58,7 +65,7 @@ class DetectionController:
         self.capture.stop_capture()
 
     def _run(self):
-        interval = 1.0 / max(1, self.fps)
+        interval = 0.0 if (self.fps is None or self.fps <= 0) else 1.0 / max(1.0, float(self.fps))
         while self._running.is_set():
             frame = self.capture.get_latest_frame()
             if frame is None:
@@ -128,4 +135,5 @@ class DetectionController:
                         self.log(f"Action planner error: {e}")
             except Exception as e:
                 self.log(f"Inference error: {e}")
-            time.sleep(interval)
+            if interval > 0:
+                time.sleep(interval)
