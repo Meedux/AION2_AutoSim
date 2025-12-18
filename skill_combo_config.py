@@ -94,11 +94,21 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
     # When true, the planner will perform idle roaming: move forward and look around
     # when no monsters are detected. Toggleable in the UI.
     "ENABLE_ROAM": True,
+    # Random combat chance: probability (0.0-1.0) of triggering combat mode during roaming
+    # even when no monsters are detected. Set to 0.5 (50%) by default. Configurable in UI.
+    "RANDOM_COMBAT_CHANCE": 0.50,
     # Mode for forcing a skill before falling back to standard attacks:
     #   'ready_only' (default): force a skill if one is ready
     #   'always': always try to force when any skill/comb is ready
     #   'disabled': never force (use standard attack path)
     "FORCE_SKILL_BEFORE_STANDARD_MODE": "ready_only",
+    # FAST MODE: When enabled, all delays are reduced for aggressive combat
+    # Default delay between skills: 0.12s (vs normal 0.5s)
+    "FAST_MODE_ENABLED": True,
+    "FAST_MODE_SKILL_DELAY": 0.12,
+    # Panic mode: triggers at this enemy count with even faster execution
+    "PANIC_THRESHOLD": 3,
+    "PANIC_MODE_SKILL_DELAY": 0.08,
         # Skill metadata for pack-aware logic (per-skill overrides)
         # Example entry: "2": {"type": "aoe", "min_enemy_count": 3, "save_for_pack": True, "defensive": False}
         "SKILL_METADATA": {},
@@ -146,7 +156,8 @@ def _refresh_module_vars() -> None:
     global COMBO_PRIORITY, STEALTH_ATTACK_MODE_ENABLED, ATTACK_MODE_WEIGHTS
     global SINGLE_SKILL_POOL, SINGLE_SKILL_GLOBAL_COOLDOWN
     global COMBAT_USE_SKILLS, ENABLE_ROAM, LANGUAGE, FORCE_SKILL_BEFORE_STANDARD_MODE
-        global SKILL_METADATA, COMBO_METADATA, OUTNUMBERED_THRESHOLD, DEFENSIVE_COOLDOWN_SEC
+    global SKILL_METADATA, COMBO_METADATA, OUTNUMBERED_THRESHOLD, DEFENSIVE_COOLDOWN_SEC
+    global RANDOM_COMBAT_CHANCE
 
     # Normalize skill keys: strip any leading 'alt+' or 'ctrl+' and normalize to lowercase
     raw_skills = _config.get('SKILL_COOLDOWNS', {}) or {}
@@ -194,11 +205,19 @@ def _refresh_module_vars() -> None:
     SINGLE_SKILL_GLOBAL_COOLDOWN = float(_config.get('SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5))
     COMBAT_USE_SKILLS = bool(_config.get('COMBAT_USE_SKILLS', True))
     ENABLE_ROAM = bool(_config.get('ENABLE_ROAM', True))
+    RANDOM_COMBAT_CHANCE = float(_config.get('RANDOM_COMBAT_CHANCE', 0.50))
     FORCE_SKILL_BEFORE_STANDARD_MODE = _config.get('FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')
-        SKILL_METADATA = _config.get('SKILL_METADATA', {}) or {}
-        COMBO_METADATA = _config.get('COMBO_METADATA', {}) or {}
-        OUTNUMBERED_THRESHOLD = int(_config.get('OUTNUMBERED_THRESHOLD', 3))
-        DEFENSIVE_COOLDOWN_SEC = float(_config.get('DEFENSIVE_COOLDOWN_SEC', 8.0))
+    
+    # FAST MODE configuration - aggressive combat with reduced delays
+    FAST_MODE_ENABLED = bool(_config.get('FAST_MODE_ENABLED', True))
+    FAST_MODE_SKILL_DELAY = float(_config.get('FAST_MODE_SKILL_DELAY', 0.12))
+    PANIC_THRESHOLD = int(_config.get('PANIC_THRESHOLD', 3))
+    PANIC_MODE_SKILL_DELAY = float(_config.get('PANIC_MODE_SKILL_DELAY', 0.08))
+    
+    SKILL_METADATA = _config.get('SKILL_METADATA', {}) or {}
+    COMBO_METADATA = _config.get('COMBO_METADATA', {}) or {}
+    OUTNUMBERED_THRESHOLD = int(_config.get('OUTNUMBERED_THRESHOLD', 3))
+    DEFENSIVE_COOLDOWN_SEC = float(_config.get('DEFENSIVE_COOLDOWN_SEC', 8.0))
     LANGUAGE = _config.get('LANGUAGE', 'en')
 
 

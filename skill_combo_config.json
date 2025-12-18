@@ -29,10 +29,10 @@
     "combo_set": 0.2
   },
   "SINGLE_SKILL_POOL": [
-    "1",
-    "2"
+    "1"
   ],
   "SINGLE_SKILL_GLOBAL_COOLDOWN": 1.5,
   "COMBAT_USE_SKILLS": true,
-  "LANGUAGE": "en"
+  "LANGUAGE": "en",
+  "SKILL_METADATA": {}
 }

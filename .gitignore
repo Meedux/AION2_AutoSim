@@ -134,3 +134,5 @@ models/*.onnx
 
 # Build output
 /output/
+
+/archive/

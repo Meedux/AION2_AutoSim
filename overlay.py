@@ -39,12 +39,14 @@ class OverlayWindow(QtWidgets.QWidget):
 
 		# Smoothing / trail visualization settings
 		self._smoothing_enabled = True
-		self._smoothing_alpha = 0.35  # interpolation factor (0..1), higher = snappier
-		self._track_timeout = 0.5  # seconds before a track is considered stale
-		self._trail_enabled = True
-		self._trail_length = 8
+		self._smoothing_alpha = 0.65  # FASTER: higher = snappier (was 0.35)
+		self._track_timeout = 0.25  # FASTER: stale timeout (was 0.5s)
+		self._trail_enabled = False  # DISABLED: trails add latency
+		self._trail_length = 4  # Shorter trails if enabled
 		# Internal tracking state: list of tracks (each track is a dict)
 		self._tracks: List[dict] = []
+		# Last update time for rate limiting
+		self._last_update_time = 0.0
 
 	def make_clickthrough(self):
 		hwnd = int(self.winId())

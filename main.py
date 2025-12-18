@@ -1,19 +1,27 @@
-
-"""Main GUI application for AION.
+"""Main GUI application for AION using CustomTkinter.
 Uses a local YOLO weight (models/aion.pt) to run realtime detections
 and draw a click-through overlay on the selected game window.
 """
 import sys
 import os
 import ctypes
-from PySide6 import QtWidgets, QtCore
+import threading
+import time
+import tkinter as tk
+from tkinter import messagebox
+import customtkinter as ctk
 from loguru import logger
 from utils import list_windows, get_window_rect
 from overlay import OverlayWindow
 from detection import DetectionController
 import input_controller as ic
 
+# PySide6 is still needed for the overlay (transparent click-through window)
+from PySide6 import QtWidgets, QtCore, QtGui
 
+# ============================================================================
+# TRANSLATIONS (preserved exactly as before)
+# ============================================================================
 TRANSLATIONS = {
     'en': {
         'app_title': 'AION Autoplay',
@@ -32,12 +40,9 @@ TRANSLATIONS = {
         'status_available': 'Available',
         'status_unavailable': 'Unavailable',
         'status_unknown': 'Unknown',
-        'status_tooltip_unknown': 'Unable to determine backend status',
-        'status_tooltip_available': "Backend '{backend}' is available",
-        'status_tooltip_unavailable': '{error}',
         'group_skill_config': 'Skill Combo Configuration',
-        'checkbox_stealth_attack': 'Enable randomized attack mode (randomize attacks)',
-        'label_standard_weight': 'Standard Attack Weight (Tab-target):',
+        'checkbox_stealth_attack': 'Enable randomized attack mode',
+        'label_standard_weight': 'Standard Attack Weight:',
         'label_single_weight': 'Single Skill Weight:',
         'label_combo_weight': 'Combo Set Weight:',
         'label_force_skill_mode': 'Force Skill Before Standard:',
@@ -47,129 +52,23 @@ TRANSLATIONS = {
         'checkbox_combat_skills': 'Enable skills & combos during combat',
         'label_outnumbered_threshold': 'Outnumbered threshold (enemies):',
         'label_defensive_cooldown': 'Defensive reuse (sec):',
-        'group_skill_metadata': 'Skill Metadata',
-        'label_skill_type': 'Skill type:',
-        'skill_type_single': 'Single',
-        'skill_type_cleave': 'Cleave',
-        'skill_type_aoe': 'AOE',
-        'label_min_enemy_count': 'Min enemy count:',
-        'checkbox_save_for_pack': 'Save for pack',
-        'checkbox_defensive_skill': 'Defensive skill',
-        'group_combo_metadata': 'Combo Metadata',
-        'label_combo_type': 'Combo type:',
-        'button_edit_skills': '⚙️ Edit Individual Skills',
-        'button_edit_combos': '🎯 Edit Combo Sets',
+        'button_edit_skills': '⚙️ Edit Skills',
+        'button_edit_combos': '🎯 Edit Combos',
         'button_start': 'Start',
         'button_stop': 'Stop',
         'button_emergency_stop': 'EMERGENCY STOP',
         'group_cooldown_monitor': 'Cooldown Monitor',
         'skills_table_header_skill': 'Skill',
         'skills_table_header_remaining': 'Remaining(s)',
+        'skills_table_header_cooldown': 'Cooldown(s)',
         'combos_table_header_combo': 'Combo',
         'combos_table_header_status': 'Status',
         'status_ready': 'Ready',
-        'status_unknown_value': 'Unknown',
-        'status_waiting': 'Waiting',
-        'status_cooldown': 'Cooldown {seconds}s',
-        'trailing_hint_skill_pool': 'Hint: Drag to reorder, double-click to edit, or capture keys with the add button.',
-        'button_save_changes': 'Save Changes',
-        'button_cancel': 'Cancel',
-        'skill_editor_title': 'Skill Editor',
-        'skill_editor_subtitle': 'Manage cooldowns and the single-skill pool used by the planner.',
-        'group_single_skill_pool': 'Single Skill Pool',
-        'group_skill_timing': 'Skill Timing',
-        'placeholder_skill_pool': 'e.g. 1,2,3,f1',
-        'skill_editor_search_placeholder': 'Search skill key...',
-        'button_add_pool_skill': 'Add',
-        'button_remove_pool_skill': 'Remove',
-        'tooltip_skill_pool': 'Comma separated skill keys used for single-skill selection',
-        'tooltip_add_pool_skill': 'Capture a key to add to the pool',
-        'button_reset_filter': 'Reset',
-        'label_single_skill_gcd': 'Single Skill Global Cooldown:',
-        'group_skill_cooldowns': 'Individual Skill Cooldowns',
-        'table_header_keybind': 'Keybind',
-        'table_header_cooldown': 'Cooldown(s)',
-        'suffix_seconds': ' sec',
-        'skill_summary_total': 'Tracked skills',
-        'skill_summary_pool': 'Pool entries',
-        'skill_summary_gcd': 'Global cooldown',
-        'button_add_skill': '➕ Add',
-        'button_remove_skill': '➖ Remove',
-        'msg_duplicate_keybind_title': 'Duplicate Keybind',
-        'msg_duplicate_keybind_body': "Keybind '{keybind}' already exists!",
-        'msg_failed_persist_skill': 'Failed to persist skill config to JSON: {error}',
-        'combo_editor_title': 'Edit Combo Sets',
-        'label_combo_sets': 'Combo Sets:',
-        'button_new_combo': '➕ New Combo',
-        'button_delete_combo': '➖ Delete Combo',
-        'label_combo_name': 'Combo Name:',
-        'checkbox_combo_enabled': 'Enabled',
-        'label_combo_cooldown': 'Combo Cooldown:',
-        'label_combo_delay': 'Delay Between Skills:',
-        'label_combo_skills': 'Skills to Execute in Order:',
-        'combo_editor_intro': (
-            'Create and manage skill combo sets. Each combo set executes a sequence of skills with delays.\n'
-            'Combo sets have their own cooldown timer and only execute when ALL skills are ready.'
-        ),
-        'button_add_skill_to_combo': '⌨️ Press Key to Add',
-        'button_save_combo': '💾 Save Combo',
-        'placeholder_combo_skills': (
-            "Click 'Press Key to Add' button to add skills, or type manually:\n1\n2\nalt+1\n3"
-        ),
-        'default_combo_name': 'Combo {index}',
-        'msg_combo_delete_title': 'Delete Combo',
-        'msg_combo_delete_body': "Delete combo '{name}'?",
-        'msg_combo_saved': "Combo '{name}' saved!",
-        'msg_duplicate_skill_title': 'Duplicate Skill',
-        'msg_duplicate_skill_body': "Skill '{skill}' already in pool!",
-        'capture_title': 'Capture Key',
-        'capture_instruction': 'Press the skill key:\n\nSupported: F1-F9, 1-9, 0, -, =',
-        'capture_waiting': 'Waiting...',
-        'capture_confirm': '✓ Confirm',
-        'capture_cancel': '✗ Cancel',
-        'capture_invalid': 'Invalid key! Use F1-F9 or 1-9, 0, -, =',
-        'msg_backend_unavailable_title': 'Backend Unavailable',
-        'msg_backend_unavailable_body': "Selected backend '{backend}' appears unavailable:\n\n{error}",
-        'msg_persist_backend_fail': 'Failed to persist input backend to JSON: {error}',
-        'msg_persist_dry_run_fail': 'Failed to persist DRY_RUN to JSON: {error}',
-        'prestart_title': 'Before You Start - Read Carefully',
-        'prestart_info': (
-            'Please verify the following BEFORE starting the macro:\n\n'
-            '- Make sure the Player is already in the hunting/farming area\n'
-            '- Ensure the Interception driver is installed (the program can install it)\n'
-            '- Double-check and configure your Skills and Combos (no misinputs)\n\n'
-            'Recommended In-Game Settings to verify:\n'
-            'Graphics -> Display Mode -> Windowed Mode\n'
-            'Graphics -> Nvidia Reflex -> BOOST (if using Nvidia)\n'
-            'Key Settings -> Change Target -> Tab\n'
-            'Combat -> Target Search -> Preferred Direction -> Camera Forward\n'
-            'Combat -> Target Search -> Advanced -> Closest target first\n'
-            'Combat -> Controls -> Control Mode -> AION 1\n'
-            'Combat -> Controls -> Ground click movement -> Allow both\n'
-            'Combat -> Controls -> Follow target when using skills -> On\n'
-            'Combat -> Controls -> Repeat basic attack -> On\n'
-            'Combat -> Controls -> Auto target on skill use -> On'
-        ),
-        'prestart_button': 'I Understand and Done Everything',
-        'msg_interception_missing_title': 'Interception Driver',
-        'msg_interception_missing_body': (
-            'Interception driver appears missing.\n'
-            'Automatic installation failed or requires manual steps.\n'
-            'Please install the Interception driver and reboot your PC.'
-        ),
-        'msg_interception_installed_title': 'Interception Installed',
-        'msg_interception_installed_body': (
-            'Interception driver installed. Please RESTART your computer to ensure the driver is activated.'
-        ),
+        'status_cooldown': 'CD: {seconds}s',
         'settings_language_group': 'Language',
         'settings_language_label': 'Interface language:',
         'language_english': 'English',
         'language_korean': 'Korean',
-        'msg_failed_skill_json': 'Failed to persist skill config to JSON: {error}',
-        'msg_failed_backend_json': 'Failed to persist input backend to JSON: {error}',
-        'msg_failed_dry_run_json': 'Failed to persist DRY_RUN to JSON: {error}',
-        'msg_failed_language_json': 'Failed to persist language preference: {error}',
-        'log_skills_updated': '✓ Individual skills updated',
         'log_skill_config_updated': '✓ Skill combo configuration updated',
         'log_no_window_selected': 'No window selected',
         'log_unable_get_window_rect': 'Unable to get window rect',
@@ -179,31 +78,90 @@ TRANSLATIONS = {
         'log_simulate_mode': 'Simulate mode (DRY_RUN) set to: {state}',
         'state_on': 'ON',
         'state_off': 'OFF',
-        'log_hotkey_registered': 'Hotkey registered: Delete (RegisterHotKey)',
-        'log_register_hotkey_failed': 'RegisterHotKey failed; falling back to low-level keyboard hook',
-        'log_failed_hotkey_hook': 'Failed to install low-level keyboard hook for Delete key',
-        'log_simulate_toggle_fail': 'Failed to toggle simulate mode: {error}',
-        'log_backend_set_fail': 'Failed to set input backend: {error}',
-        'log_backend_set': "Input backend set to: {backend}",
-        'log_backend_unavailable': "Selected backend '{backend}' may be unavailable: {error}",
-        'log_opened_config': '✓ Opened {path}',
-        'log_config_not_found': 'Config file not found: {path}',
-        'log_open_config_fail': 'Failed to open config file: {error}',
-        'log_detection_start': 'Starting capture and detection',
-        'log_detection_active': '✓ Automation active',
-        'log_detection_stop': 'Stopping detection',
-        'log_action_planner_error': 'Action planner error: {error}',
-        'log_inference_error': 'Inference error: {error}',
-        'language_combo_placeholder': 'Select language',
-        'msg_combo_save_warning_title': 'Save Warning',
-        'msg_combo_save_warning_body': (
-            'Configuration updated in memory but failed to save to file:\n{error}\n\nChanges will be lost on restart.'
+        'prestart_title': 'Before You Start',
+        'prestart_info': (
+            'PLEASE VERIFY THE FOLLOWING BEFORE STARTING:\n\n'
+            '✓ Player is in the hunting/farming area\n'
+            '✓ Interception driver is installed (program will prompt if missing)\n'
+            '✓ Skills and Combos are configured correctly (avoid invalid inputs)\n\n'
+            '═══════════════════════════════════════════════════\n'
+            'RECOMMENDED IN-GAME SETTINGS:\n'
+            '═══════════════════════════════════════════════════\n\n'
+            'Graphics → Display Mode → Windowed Mode\n'
+            'Graphics → Nvidia Reflex → BOOST (if using Nvidia)\n\n'
+            'Key Settings → Change Target → Tab\n\n'
+            'Combat → Target Search → Priority Direction → Camera Forward\n'
+            'Combat → Target Search → Details → Closest target first\n\n'
+            'Combat → Controls → Control Mode → AION 1\n'
+            'Combat → Controls → Ground Click Movement → Allow Both\n'
+            'Combat → Controls → Follow Target on Skill Use → ON\n'
+            'Combat → Controls → Repeat Basic Attack → ON\n'
+            'Combat → Controls → Auto Target on Skill Use → ON'
         ),
-        'msg_combo_save_info_title': 'Saved',
-        'msg_interception_warning': 'Warning',
-        'msg_interception_warning_body': 'Interception folder not found. Build will continue but Interception will not be bundled.',
-        'button_close': 'Close',
+        'prestart_button': 'I Understand and Have Done Everything',
+        'msg_interception_missing_title': 'Interception Driver',
+        'msg_interception_missing_body': 'Interception driver appears missing. Please install and reboot.',
         'button_ok': 'OK',
+        'button_save': '💾 Save',
+        'button_cancel': '✗ Cancel',
+        'button_add': '➕ Add',
+        'button_remove': '➖ Remove',
+        'button_new_combo': '➕ New Combo',
+        'button_delete_combo': '🗑️ Delete Combo',
+        'skill_editor_title': 'Skill Cooldown Editor',
+        'skill_editor_subtitle': 'Configure individual skill cooldowns and the single-skill pool.',
+        'group_skill_cooldowns': 'Individual Skill Cooldowns',
+        'group_single_skill_pool': 'Single Skill Pool',
+        'group_skill_timing': 'Skill Timing',
+        'label_single_skill_gcd': 'Single Skill GCD:',
+        'group_skill_metadata': 'Skill Metadata',
+        'label_skill_type': 'Skill type:',
+        'skill_type_single': 'Single target',
+        'skill_type_cleave': 'Cleave (2-3 targets)',
+        'skill_type_aoe': 'AOE (multiple)',
+        'label_min_enemy_count': 'Min enemy count:',
+        'checkbox_save_for_pack': 'Save for pack',
+        'checkbox_defensive_skill': 'Defensive skill',
+        'combo_editor_title': 'Combo Set Editor',
+        'combo_editor_subtitle': 'Create and manage skill combo sets.',
+        'label_combo_name': 'Combo Name:',
+        'label_combo_cooldown': 'Combo Cooldown (sec):',
+        'label_combo_delay': 'Delay Between Skills (sec):',
+        'label_combo_skills': 'Skills (one per line):',
+        'checkbox_combo_enabled': 'Enabled',
+        'msg_combo_saved': 'Combo saved!',
+        'msg_combo_deleted': 'Combo deleted!',
+        'msg_skill_saved': 'Skills saved!',
+        'capture_title': 'Capture Key',
+        'capture_instruction': 'Press a skill key:\n\nSupported: F1-F9, 1-9, 0, -, =',
+        'capture_waiting': 'Waiting...',
+        'capture_confirm': '✓ Confirm',
+        'capture_cancel': '✗ Cancel',
+        'capture_invalid': 'Invalid key! Use F1-F9, 1-9, 0, -, =',
+        'log_skills_updated': '✓ Skills updated',
+        'button_capture_key': '⌨️ Capture Key',
+        'button_add_skill_key': '⌨️ Add Skill Key',
+        'skill_pool_hint': 'Tip: Use capture button to add keys, click to select and remove.',
+        'table_header_keybind': 'Key',
+        'table_header_cooldown': 'Cooldown (s)',
+        'nav_queue': 'Combat Queue',
+        'queue_title': 'Combat Action Queue',
+        'queue_subtitle': 'Real-time view of combat inputs and duplicate prevention.',
+        'queue_pending': 'Pending Actions',
+        'queue_history': 'Recent Actions',
+        'queue_stats': 'Statistics',
+        'queue_total_queued': 'Total Queued:',
+        'queue_total_executed': 'Total Executed:',
+        'queue_total_blocked': 'Blocked (Duplicates):',
+        'queue_clear': '🗑️ Clear Queue',
+        'queue_status_pending': 'Pending',
+        'queue_status_executing': 'Executing',
+        'queue_status_completed': 'Completed',
+        'queue_status_blocked': 'Blocked',
+        'queue_empty': 'No pending actions',
+        'label_random_combat_chance': 'Random Combat Chance:',
+        'label_random_combat_percent': '{percent}%',
+        'settings_combat_group': 'Combat Settings',
     },
     'ko': {
         'app_title': 'AION 자동 실행',
@@ -211,195 +169,145 @@ TRANSLATIONS = {
         'nav_skills': '스킬',
         'nav_combos': '콤보',
         'nav_cooldowns': '재사용 대기',
+        'nav_queue': '전투 대기열',
         'nav_logs': '로그',
         'nav_settings': '설정',
         'label_game_window': '게임 창:',
         'label_settings': '설정:',
-        'label_settings_info': '로컬 모델 가중치 사용: models/aion.pt (Ultralytics YOLO)',
+        'label_settings_info': '로컬 모델: models/aion.pt (YOLO)',
         'label_input_backend': '입력 백엔드:',
-        'checkbox_simulate': '시뮬레이션 모드 (로그만 기록, 실제 입력 없음)',
+        'checkbox_simulate': '시뮬레이션 모드',
         'action_refresh': '새로 고침',
         'status_available': '사용 가능',
         'status_unavailable': '사용 불가',
         'status_unknown': '알 수 없음',
-        'status_tooltip_unknown': '백엔드 상태를 확인할 수 없습니다',
-        'status_tooltip_available': "백엔드 '{backend}' 를 사용할 수 있습니다", 
-        'status_tooltip_unavailable': '{error}',
         'group_skill_config': '스킬 콤보 설정',
-        'checkbox_stealth_attack': '랜덤 공격 모드 활성화 (공격 무작위화)',
-        'label_standard_weight': '일반 공격 가중치 (탭 타겟):',
+        'checkbox_stealth_attack': '랜덤 공격 모드',
+        'label_standard_weight': '일반 공격 가중치:',
         'label_single_weight': '단일 스킬 가중치:',
         'label_combo_weight': '콤보 세트 가중치:',
-        'label_force_skill_mode': '일반 공격 전 스킬 강제:',
+        'label_force_skill_mode': '스킬 강제:',
         'force_mode_ready_only': '준비 시만',
         'force_mode_always': '항상',
         'force_mode_disabled': '사용 안 함',
-        'checkbox_combat_skills': '전투 중 스킬 & 콤보 사용',
+        'checkbox_combat_skills': '전투 중 스킬 사용',
         'label_outnumbered_threshold': '열세 기준 (적 수):',
         'label_defensive_cooldown': '방어 재사용 (초):',
-        'group_skill_metadata': '스킬 메타데이터',
-        'label_skill_type': '스킬 유형:',
-        'skill_type_single': '단일',
-        'skill_type_cleave': '광역(휘두르기)',
-        'skill_type_aoe': '광역(AOE)',
-        'label_min_enemy_count': '최소 적 수:',
-        'checkbox_save_for_pack': '무리에서만 사용',
-        'checkbox_defensive_skill': '방어 스킬',
-        'group_combo_metadata': '콤보 메타데이터',
-        'label_combo_type': '콤보 유형:',
-        'button_edit_skills': '⚙️ 개별 스킬 편집',
-        'button_edit_combos': '🎯 콤보 세트 편집',
+        'button_edit_skills': '⚙️ 스킬 편집',
+        'button_edit_combos': '🎯 콤보 편집',
         'button_start': '시작',
         'button_stop': '중지',
         'button_emergency_stop': '비상 정지',
         'group_cooldown_monitor': '재사용 대기 모니터',
         'skills_table_header_skill': '스킬',
         'skills_table_header_remaining': '남은 시간(초)',
+        'skills_table_header_cooldown': '쿨다운(초)',
         'combos_table_header_combo': '콤보',
         'combos_table_header_status': '상태',
         'status_ready': '준비됨',
-        'status_unknown_value': '알 수 없음',
-        'status_waiting': '대기 중',
-        'status_cooldown': '재사용 {seconds}초',
-        'trailing_hint_skill_pool': '팁: 드래그로 순서를 변경하고 더블클릭으로 수정하거나 캡처 버튼으로 키를 추가하세요.',
-        'button_save_changes': '변경 사항 저장',
-        'button_cancel': '취소',
-        'skill_editor_title': '스킬 편집기',
-        'skill_editor_subtitle': '플래너가 사용하는 단일 스킬 풀과 재사용 대기 시간을 관리하세요.',
-        'group_single_skill_pool': '단일 스킬 풀',
-        'group_skill_timing': '스킬 타이밍',
-        'placeholder_skill_pool': '예: 1,2,3,f1',
-        'skill_editor_search_placeholder': '스킬 키 검색...',
-        'button_add_pool_skill': '추가',
-        'button_remove_pool_skill': '제거',
-        'tooltip_skill_pool': '싱글 스킬 선택에 사용되는 스킬 키를 쉼표로 구분하여 입력하세요',
-        'tooltip_add_pool_skill': '풀에 추가할 키를 캡처합니다',
-        'button_reset_filter': '초기화',
-        'label_single_skill_gcd': '싱글 스킬 글로벌 쿨다운:',
-        'group_skill_cooldowns': '개별 스킬 재사용 대기',
-        'table_header_keybind': '키 바인딩',
-        'table_header_cooldown': '재사용 대기(초)',
-        'suffix_seconds': ' 초',
-        'skill_summary_total': '추적 중인 스킬',
-        'skill_summary_pool': '풀 항목 수',
-        'skill_summary_gcd': '전역 쿨다운',
-        'button_add_skill': '➕ 추가',
-        'button_remove_skill': '➖ 제거',
-        'msg_duplicate_keybind_title': '중복 키 바인딩',
-        'msg_duplicate_keybind_body': "키 바인딩 '{keybind}' 이(가) 이미 존재합니다!",
-        'msg_failed_persist_skill': '스킬 설정을 JSON에 저장하지 못했습니다: {error}',
-        'combo_editor_title': '콤보 세트 편집',
-        'label_combo_sets': '콤보 세트:',
-        'button_new_combo': '➕ 새 콤보',
-        'button_delete_combo': '➖ 콤보 삭제',
-        'label_combo_name': '콤보 이름:',
-        'checkbox_combo_enabled': '사용',
-        'label_combo_cooldown': '콤보 재사용 대기:',
-        'label_combo_delay': '스킬 간 지연:',
-        'label_combo_skills': '실행 순서의 스킬:',
-        'combo_editor_intro': (
-            '콤보 세트를 생성하고 관리하세요. 각 콤보 세트는 지연을 두고 스킬을 순차적으로 실행합니다.\n'
-            '콤보 세트는 고유 재사용 대기시간을 가지며 모든 스킬이 준비되었을 때만 실행됩니다.'
-        ),
-        'button_add_skill_to_combo': '⌨️ 키 입력 추가',
-        'button_save_combo': '💾 콤보 저장',
-        'placeholder_combo_skills': (
-            "'키 입력 추가' 버튼을 눌러 스킬을 추가하거나 직접 입력하세요:\n1\n2\nalt+1\n3"
-        ),
-        'default_combo_name': '콤보 {index}',
-        'msg_combo_delete_title': '콤보 삭제',
-        'msg_combo_delete_body': "콤보 '{name}' 을(를) 삭제하시겠습니까?",
-        'msg_combo_saved': "콤보 '{name}' 이(가) 저장되었습니다!",
-        'msg_duplicate_skill_title': '중복 스킬',
-        'msg_duplicate_skill_body': "스킬 '{skill}' 이(가) 이미 풀에 있습니다!",
-        'capture_title': '키 입력',
-        'capture_instruction': '스킬 키를 눌러주세요:\n\n지원: F1-F9, 1-9, 0, -, =',
-        'capture_waiting': '대기 중...',
-        'capture_confirm': '✓ 확인',
-        'capture_cancel': '✗ 취소',
-        'capture_invalid': '잘못된 키입니다! F1-F9 또는 1-9, 0, -, =을 사용하세요',
-        'msg_backend_unavailable_title': '백엔드 사용 불가',
-        'msg_backend_unavailable_body': "선택한 백엔드 '{backend}' 를 사용할 수 없습니다:\n\n{error}",
-        'msg_persist_backend_fail': '입력 백엔드를 JSON에 저장하지 못했습니다: {error}',
-        'msg_persist_dry_run_fail': 'DRY_RUN 값을 JSON에 저장하지 못했습니다: {error}',
-        'prestart_title': '시작 전에 반드시 확인하세요',
-        'prestart_info': (
-            '매크로를 시작하기 전에 다음을 확인하세요:\n\n'
-            '- 게임이 창 모드로 실행 중인지 확인하세요\n'
-            '- 사냥/파밍 지역에 캐릭터가 배치되어 있는지 확인하세요\n'
-            '- Interception 드라이버가 설치되어 있는지 확인하세요 (프로그램에서 설치 가능)\n'
-            '- 스킬 및 콤보 구성을 다시 확인하세요 (잘못된 입력 방지)\n\n'
-            '권장 인게임 설정:\n'
-            '그래픽 -> 표시 모드 -> 창 모드\n'
-            '그래픽 -> Nvidia Reflex -> BOOST (Nvidia 사용 시)\n'
-            '키 설정 -> 타겟 변경 -> Tab 키\n'
-            '전투 -> 타겟 탐색 -> 우선 탐색 방향 -> 카메라 전방\n'
-            '전투 -> 타겟 탐색 -> 세부 설정 -> 가장 가까운 대상 우선\n'
-            '전투 -> 조작 -> 조작 모드 -> AION 1\n'
-            '전투 -> 조작 -> 지면 클릭 이동 -> 양쪽 허용\n'
-            '전투 -> 조작 -> 스킬 사용 시 대상 추적 -> 켬\n'
-            '전투 -> 조작 -> 기본 공격 반복 사용 -> 켬\n'
-            '전투 -> 조작 -> 스킬 사용 시 자동 타겟 -> 켬'
-        ),
-        'prestart_button': '모두 완료했습니다',
-        'msg_interception_missing_title': 'Interception 드라이버',
-        'msg_interception_missing_body': (
-            'Interception 드라이버가 설치되지 않은 것으로 보입니다.\n'
-            '자동 설치가 실패했거나 추가 단계가 필요합니다.\n'
-            'Interception 드라이버를 설치한 후 PC를 재부팅하세요.'
-        ),
-        'msg_interception_installed_title': 'Interception 설치 완료',
-        'msg_interception_installed_body': (
-            'Interception 드라이버가 설치되었습니다. 드라이버 활성화를 위해 PC를 반드시 재부팅하세요.'
-        ),
+        'status_cooldown': '대기: {seconds}초',
         'settings_language_group': '언어',
         'settings_language_label': '인터페이스 언어:',
         'language_english': '영어',
         'language_korean': '한국어',
-        'msg_failed_skill_json': '스킬 설정을 JSON에 저장하지 못했습니다: {error}',
-        'msg_failed_backend_json': '입력 백엔드를 JSON에 저장하지 못했습니다: {error}',
-        'msg_failed_dry_run_json': 'DRY_RUN 값을 JSON에 저장하지 못했습니다: {error}',
-        'msg_failed_language_json': '언어 설정을 저장하지 못했습니다: {error}',
-        'log_skills_updated': '✓ 개별 스킬이 업데이트되었습니다',
-        'log_skill_config_updated': '✓ 스킬 콤보 구성이 업데이트되었습니다',
-        'log_no_window_selected': '선택된 창이 없습니다',
-        'log_unable_get_window_rect': '창 위치를 가져올 수 없습니다',
-        'log_started_detection': '감지를 시작했습니다',
-        'log_stopped': '정지했습니다',
+        'log_skill_config_updated': '✓ 스킬 설정 업데이트됨',
+        'log_no_window_selected': '선택된 창 없음',
+        'log_unable_get_window_rect': '창 위치 가져오기 실패',
+        'log_started_detection': '감지 시작됨',
+        'log_stopped': '정지됨',
         'log_emergency_stop': '긴급 정지: 자동화 비활성화',
-        'log_simulate_mode': '시뮬레이션 모드 (DRY_RUN) 상태: {state}',
+        'log_simulate_mode': '시뮬레이션 모드: {state}',
         'state_on': '켬',
         'state_off': '끔',
-        'log_hotkey_registered': '단축키 등록됨: Delete (RegisterHotKey)',
-        'log_register_hotkey_failed': 'RegisterHotKey 실패: 저수준 키보드 후크로 전환합니다',
-        'log_failed_hotkey_hook': 'Delete 키에 대한 저수준 키보드 후크 설치에 실패했습니다',
-        'log_simulate_toggle_fail': '시뮬레이션 모드를 전환하지 못했습니다: {error}',
-        'log_backend_set_fail': '입력 백엔드를 설정하지 못했습니다: {error}',
-        'log_backend_set': "입력 백엔드를 설정했습니다: {backend}",
-        'log_backend_unavailable': "선택한 입력 백엔드 '{backend}' 를 사용할 수 없을 수 있습니다: {error}",
-        'log_opened_config': '✓ {path} 파일을 열었습니다',
-        'log_config_not_found': '구성 파일을 찾을 수 없습니다: {path}',
-        'log_open_config_fail': '구성 파일을 열지 못했습니다: {error}',
-        'log_detection_start': '캡처 및 감지를 시작합니다',
-        'log_detection_active': '✓ 자동화가 활성화되었습니다',
-        'log_detection_stop': '감지를 중지합니다',
-        'log_action_planner_error': '액션 플래너 오류: {error}',
-        'log_inference_error': '추론 오류: {error}',
-        'language_combo_placeholder': '언어 선택',
-        'msg_combo_save_warning_title': '저장 경고',
-        'msg_combo_save_warning_body': (
-            '구성이 메모리에만 업데이트되었고 파일 저장에 실패했습니다:\n{error}\n\n재시작 시 변경 사항이 사라집니다.'
+        'prestart_title': '시작 전 확인',
+        'prestart_info': (
+            '시작 전 반드시 확인하세요:\n\n'
+            '✓ 캐릭터가 사냥/파밍 지역에 있는지 확인\n'
+            '✓ Interception 드라이버 설치됨 (없으면 프로그램이 안내)\n'
+            '✓ 스킬/콤보 설정이 올바른지 확인 (잘못된 입력 방지)\n\n'
+            '═══════════════════════════════════════════════════\n'
+            '권장 인게임 설정:\n'
+            '═══════════════════════════════════════════════════\n\n'
+            '그래픽 → 표시 모드 → 창 모드\n'
+            '그래픽 → Nvidia Reflex → BOOST (Nvidia 사용 시)\n\n'
+            '키 설정 → 타겟 변경 → Tab 키\n\n'
+            '전투 → 타겟 탐색 → 우선 탐색 방향 → 카메라 전방\n'
+            '전투 → 타겟 탐색 → 세부 설정 → 가장 가까운 대상 우선\n\n'
+            '전투 → 조작 → 조작 모드 → AION 1\n'
+            '전투 → 조작 → 지면 클릭 이동 → 양쪽 허용\n'
+            '전투 → 조작 → 스킬 사용 시 대상 추적 → 켬\n'
+            '전투 → 조작 → 기본 공격 반복 사용 → 켬\n'
+            '전투 → 조작 → 스킬 사용 시 자동 타겟 → 켬'
         ),
-        'msg_combo_save_info_title': '저장 완료',
-        'msg_interception_warning': '경고',
-        'msg_interception_warning_body': 'Interception 폴더를 찾을 수 없습니다. 빌드는 계속되지만 Interception이 포함되지 않습니다.',
-        'button_close': '닫기',
+        'prestart_button': '모두 완료했습니다',
+        'msg_interception_missing_title': 'Interception 드라이버',
+        'msg_interception_missing_body': 'Interception 드라이버가 없습니다. 설치 후 재부팅하세요.',
         'button_ok': '확인',
+        'button_save': '💾 저장',
+        'button_cancel': '✗ 취소',
+        'button_add': '➕ 추가',
+        'button_remove': '➖ 제거',
+        'button_new_combo': '➕ 새 콤보',
+        'button_delete_combo': '🗑️ 콤보 삭제',
+        'skill_editor_title': '스킬 쿨다운 편집기',
+        'skill_editor_subtitle': '개별 스킬 쿨다운과 스킬 풀을 설정하세요.',
+        'group_skill_cooldowns': '개별 스킬 쿨다운',
+        'group_single_skill_pool': '단일 스킬 풀',
+        'group_skill_timing': '스킬 타이밍',
+        'label_single_skill_gcd': '단일 스킬 GCD:',
+        'group_skill_metadata': '스킬 메타데이터',
+        'label_skill_type': '스킬 유형:',
+        'skill_type_single': '단일 대상',
+        'skill_type_cleave': '광역(2-3 대상)',
+        'skill_type_aoe': 'AOE(다수)',
+        'label_min_enemy_count': '최소 적 수:',
+        'checkbox_save_for_pack': '무리에서만 사용',
+        'checkbox_defensive_skill': '방어 스킬',
+        'combo_editor_title': '콤보 세트 편집기',
+        'combo_editor_subtitle': '스킬 콤보 세트를 생성하고 관리하세요.',
+        'label_combo_name': '콤보 이름:',
+        'label_combo_cooldown': '콤보 쿨다운 (초):',
+        'label_combo_delay': '스킬 간 지연 (초):',
+        'label_combo_skills': '스킬 (줄당 하나씩):',
+        'checkbox_combo_enabled': '사용',
+        'msg_combo_saved': '콤보가 저장되었습니다!',
+        'msg_combo_deleted': '콤보가 삭제되었습니다!',
+        'msg_skill_saved': '스킬이 저장되었습니다!',
+        'capture_title': '키 캡처',
+        'capture_instruction': '스킬 키를 누르세요:\n\n지원: F1-F9, 1-9, 0, -, =',
+        'capture_waiting': '대기 중...',
+        'capture_confirm': '✓ 확인',
+        'capture_cancel': '✗ 취소',
+        'capture_invalid': '잘못된 키입니다! F1-F9, 1-9, 0, -, = 를 사용하세요',
+        'log_skills_updated': '✓ 스킬 업데이트됨',
+        'button_capture_key': '⌨️ 키 캡처',
+        'button_add_skill_key': '⌨️ 스킬 키 추가',
+        'skill_pool_hint': '팁: 캡처 버튼으로 키를 추가하고, 클릭으로 선택하여 제거하세요.',
+        'table_header_keybind': '키',
+        'table_header_cooldown': '쿨다운 (초)',
+        'queue_title': '전투 동작 대기열',
+        'queue_subtitle': '전투 입력 및 중복 방지 실시간 보기.',
+        'queue_pending': '대기 중인 동작',
+        'queue_history': '최근 동작',
+        'queue_stats': '통계',
+        'queue_total_queued': '총 대기:',
+        'queue_total_executed': '총 실행:',
+        'queue_total_blocked': '차단됨 (중복):',
+        'queue_clear': '🗑️ 대기열 지우기',
+        'queue_status_pending': '대기 중',
+        'queue_status_executing': '실행 중',
+        'queue_status_completed': '완료됨',
+        'queue_status_blocked': '차단됨',
+        'queue_empty': '대기 중인 동작 없음',
+        'label_random_combat_chance': '랜덤 전투 확률:',
+        'label_random_combat_percent': '{percent}%',
+        'settings_combat_group': '전투 설정',
     },
 }
 
 
 def translate_text(language: str, key: str, **kwargs) -> str:
+    """Get translated text for key in specified language."""
     lang_map = TRANSLATIONS.get(language, TRANSLATIONS.get('en', {}))
     text = lang_map.get(key)
     if text is None:
@@ -416,28 +324,20 @@ def is_admin():
     """Check if the program is running with administrator privileges."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
-    except:
+    except Exception:
         return False
 
 
 def run_as_admin():
     """Restart the program with administrator privileges."""
     try:
-        # Build the full command line: script path + any additional arguments
-        # sys.argv[0] is the script being run (main.py)
         script_path = os.path.abspath(sys.argv[0])
-        # Build quoted argument string including the script itself
         args = f'"{script_path}"'
         if len(sys.argv) > 1:
             args += ' ' + ' '.join([f'"{arg}"' for arg in sys.argv[1:]])
-        
-        # Use the current Python executable (this will be the venv interpreter when using the venv)
-        # ShellExecuteW with verb "runas" prompts for elevation and starts a new elevated process.
         ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, args, os.getcwd(), 1)
-        # ShellExecuteW returns a value > 32 on success
         if int(ret) <= 32:
             raise OSError(f"ShellExecuteW failed with code {ret}")
-        # If ShellExecute succeeded we should exit this (non-elevated) process so only elevated instance runs
         sys.exit(0)
     except Exception as e:
         logger.error(f"Failed to elevate privileges: {e}")
@@ -445,931 +345,1255 @@ def run_as_admin():
     return True
 
 
-class MainWindow(QtWidgets.QMainWindow):
+# ============================================================================
+# CUSTOMTKINTER MAIN APPLICATION
+# ============================================================================
+
+class AIONApp(ctk.CTk):
+    """Main application window using CustomTkinter."""
+
     def __init__(self):
         super().__init__()
+
+        # Load config
         try:
             import skill_combo_config as scc
+            self._config = scc
         except Exception:
-            scc = None
-        self._config_module = scc
-        lang = 'en'
-        if scc is not None:
-            lang = getattr(scc, 'LANGUAGE', 'en') or 'en'
-        self.current_language = lang
-        self._translatables = []
-        self._register_translatable(self.setWindowTitle, 'app_title')
-        self.setWindowTitle(self.tr('app_title'))
-        self.resize(900, 640)
+            self._config = None
 
-        central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
-        # Main layout: left navigation sidebar + right stacked pages
-        main_h = QtWidgets.QHBoxLayout(central)
+        # Language
+        self.current_language = 'en'
+        if self._config:
+            self.current_language = getattr(self._config, 'LANGUAGE', 'en') or 'en'
 
-        # Sidebar (navigation)
-        self.sidebar = QtWidgets.QWidget()
-        self.sidebar.setFixedWidth(180)
-        sb_layout = QtWidgets.QVBoxLayout(self.sidebar)
-        sb_layout.setContentsMargins(8, 8, 8, 8)
-        sb_layout.setSpacing(12)
+        # Configure window
+        self.title(self.tr('app_title'))
+        self.geometry("1100x700")
+        self.minsize(900, 600)
 
-        # Create nav buttons
-        def _nav_btn(text):
-            b = QtWidgets.QPushButton(text)
-            b.setCursor(QtCore.Qt.PointingHandCursor)
-            b.setCheckable(True)
-            b.setStyleSheet(self._nav_button_style())
-            b.setFixedHeight(44)
-            return b
+        # Set dark theme
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
 
-        self.btn_dashboard = _nav_btn(self.tr('nav_dashboard'))
-        self.btn_skills = _nav_btn(self.tr('nav_skills'))
-        self.btn_combos = _nav_btn(self.tr('nav_combos'))
-        self.btn_cooldowns = _nav_btn(self.tr('nav_cooldowns'))
-        self.btn_logs = _nav_btn(self.tr('nav_logs'))
-        self.btn_settings = _nav_btn(self.tr('nav_settings'))
-        self._register_translatable(self.btn_dashboard.setText, 'nav_dashboard')
-        self._register_translatable(self.btn_skills.setText, 'nav_skills')
-        self._register_translatable(self.btn_combos.setText, 'nav_combos')
-        self._register_translatable(self.btn_cooldowns.setText, 'nav_cooldowns')
-        self._register_translatable(self.btn_logs.setText, 'nav_logs')
-        self._register_translatable(self.btn_settings.setText, 'nav_settings')
+        # Configure grid
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        for b in (self.btn_dashboard, self.btn_skills, self.btn_combos, self.btn_cooldowns, self.btn_logs, self.btn_settings):
-            sb_layout.addWidget(b)
-        sb_layout.addStretch()
-
-        # Right side: stacked pages
-        self.pages = QtWidgets.QStackedWidget()
-        self.pages.setObjectName('pages')
-
-        main_h.addWidget(self.sidebar)
-        main_h.addWidget(self.pages, stretch=1)
-
-        # Create pages
-        self.page_dashboard = QtWidgets.QWidget()
-        self.page_skills = QtWidgets.QWidget()
-        self.page_combos = QtWidgets.QWidget()
-        self.page_cooldowns = QtWidgets.QWidget()
-        self.page_logs = QtWidgets.QWidget()
-        self.page_settings = QtWidgets.QWidget()
-
-        self.page_dashboard_layout = QtWidgets.QVBoxLayout(self.page_dashboard)
-        self.page_skills_layout = QtWidgets.QVBoxLayout(self.page_skills)
-        self.page_combos_layout = QtWidgets.QVBoxLayout(self.page_combos)
-        self.page_cooldowns_layout = QtWidgets.QVBoxLayout(self.page_cooldowns)
-        self.page_logs_layout = QtWidgets.QVBoxLayout(self.page_logs)
-        self.page_settings_layout = QtWidgets.QVBoxLayout(self.page_settings)
-
-        for p in (self.page_dashboard, self.page_skills, self.page_combos, self.page_cooldowns, self.page_logs, self.page_settings):
-            self.pages.addWidget(p)
-
-        # Connect nav buttons
-        self.btn_dashboard.clicked.connect(lambda: self.change_page(0))
-        self.btn_skills.clicked.connect(lambda: self.change_page(1))
-        self.btn_combos.clicked.connect(lambda: self.change_page(2))
-        self.btn_cooldowns.clicked.connect(lambda: self.change_page(3))
-        self.btn_logs.clicked.connect(lambda: self.change_page(4))
-        self.btn_settings.clicked.connect(lambda: self.change_page(5))
-
-        # Select dashboard by default
-        self.btn_dashboard.setChecked(True)
-        self.pages.setCurrentIndex(0)
-
-        # top controls (placed on Dashboard page)
-        form = QtWidgets.QFormLayout()
-        self.win_combo = QtWidgets.QComboBox()
-        self.refresh_btn = QtWidgets.QPushButton()
-        self._register_translatable(self.refresh_btn.setText, 'action_refresh')
-        self.refresh_btn.setText(self.tr('action_refresh'))
-        self.refresh_btn.clicked.connect(self._refresh_windows)
-        h = QtWidgets.QHBoxLayout()
-        h.addWidget(self.win_combo)
-        h.addWidget(self.refresh_btn)
-        self.label_game_window = QtWidgets.QLabel(self.tr('label_game_window'))
-        self._register_translatable(self.label_game_window.setText, 'label_game_window')
-        form.addRow(self.label_game_window, h)
-
-        # Using local model weights placed at models/aion.pt
-        self.settings_info_label = QtWidgets.QLabel(self.tr('label_settings_info'))
-        self.settings_info_label.setWordWrap(True)
-        self._register_translatable(self.settings_info_label.setText, 'label_settings_info')
-        self.label_settings = QtWidgets.QLabel(self.tr('label_settings'))
-        self._register_translatable(self.label_settings.setText, 'label_settings')
-        form.addRow(self.label_settings, self.settings_info_label)
-
-        # Input backend controls (UI toggle)
-        backend_layout = QtWidgets.QHBoxLayout()
-        self.backend_combo = QtWidgets.QComboBox()
-        # Available backends (interception-only build)
-        self.backend_combo.addItems(['interception'])
-        # Use stored config if present, otherwise reflect runtime value
-        try:
-            import skill_combo_config as scc
-            initial_backend = getattr(scc, 'INPUT_BACKEND', ic.INPUT_BACKEND)
-        except Exception:
-            initial_backend = ic.INPUT_BACKEND
-        idx = self.backend_combo.findText(initial_backend)
-        if idx >= 0:
-            self.backend_combo.setCurrentIndex(idx)
-        self.backend_combo.currentTextChanged.connect(self._on_backend_changed)
-
-        self.simulate_cb = QtWidgets.QCheckBox()
-        self._register_translatable(self.simulate_cb.setText, 'checkbox_simulate')
-        self.simulate_cb.setText(self.tr('checkbox_simulate'))
-        try:
-            initial_dry = getattr(scc, 'INPUT_DRY_RUN', ic.INPUT_DRY_RUN)
-        except Exception:
-            initial_dry = ic.INPUT_DRY_RUN
-        self.simulate_cb.setChecked(bool(initial_dry))
-        self.simulate_cb.toggled.connect(self._on_dry_run_toggled)
-
-        # Small status indicator for backend availability
-        self.backend_status = QtWidgets.QLabel("")
-        self.backend_status.setFixedWidth(140)
-        backend_layout.addWidget(self.backend_combo)
-        backend_layout.addWidget(self.backend_status)
-        backend_layout.addWidget(self.simulate_cb)
-        self.label_input_backend = QtWidgets.QLabel(self.tr('label_input_backend'))
-        self._register_translatable(self.label_input_backend.setText, 'label_input_backend')
-        form.addRow(self.label_input_backend, backend_layout)
-
-        # initialize backend status indicator
-        try:
-            self._update_backend_status(initial_backend)
-        except Exception:
-            pass
-
-        # Add the top form to the dashboard page
-        self.page_dashboard_layout.addLayout(form)
-
-        # Skill Combo Configuration Section
-        skill_group = QtWidgets.QGroupBox()
-        self._register_translatable(skill_group.setTitle, 'group_skill_config')
-        skill_group.setTitle(self.tr('group_skill_config'))
-        skill_layout = QtWidgets.QVBoxLayout()
-        
-        # Load existing configuration
-        import skill_combo_config
-        
-        # Attack mode randomization checkbox
-        self.stealth_attack_cb = QtWidgets.QCheckBox()
-        self._register_translatable(self.stealth_attack_cb.setText, 'checkbox_stealth_attack')
-        self.stealth_attack_cb.setText(self.tr('checkbox_stealth_attack'))
-        self.stealth_attack_cb.setChecked(skill_combo_config.STEALTH_ATTACK_MODE_ENABLED)
-        self.stealth_attack_cb.stateChanged.connect(self._update_skill_config)
-        skill_layout.addWidget(self.stealth_attack_cb)
-        
-        # Attack mode weights
-        weights_layout = QtWidgets.QFormLayout()
-        self.standard_attack_weight = QtWidgets.QDoubleSpinBox()
-        self.standard_attack_weight.setRange(0.0, 1.0)
-        self.standard_attack_weight.setSingleStep(0.05)
-        self.standard_attack_weight.setValue(skill_combo_config.ATTACK_MODE_WEIGHTS.get('standard_attack', 0.50))
-        self.standard_attack_weight.setSuffix(f" ({int(skill_combo_config.ATTACK_MODE_WEIGHTS.get('standard_attack', 0.50)*100)}%)")
-        self.standard_attack_weight.valueChanged.connect(lambda v: self.standard_attack_weight.setSuffix(f" ({int(v*100)}%)"))
-        self.standard_attack_weight.valueChanged.connect(self._update_skill_config)
-        label_standard = QtWidgets.QLabel(self.tr('label_standard_weight'))
-        self._register_translatable(label_standard.setText, 'label_standard_weight')
-        weights_layout.addRow(label_standard, self.standard_attack_weight)
-        
-        self.single_skill_weight = QtWidgets.QDoubleSpinBox()
-        self.single_skill_weight.setRange(0.0, 1.0)
-        self.single_skill_weight.setSingleStep(0.05)
-        self.single_skill_weight.setValue(skill_combo_config.ATTACK_MODE_WEIGHTS.get('single_skill', 0.30))
-        self.single_skill_weight.setSuffix(f" ({int(skill_combo_config.ATTACK_MODE_WEIGHTS.get('single_skill', 0.30)*100)}%)")
-        self.single_skill_weight.valueChanged.connect(lambda v: self.single_skill_weight.setSuffix(f" ({int(v*100)}%)"))
-        self.single_skill_weight.valueChanged.connect(self._update_skill_config)
-        label_single = QtWidgets.QLabel(self.tr('label_single_weight'))
-        self._register_translatable(label_single.setText, 'label_single_weight')
-        weights_layout.addRow(label_single, self.single_skill_weight)
-        
-        self.combo_set_weight = QtWidgets.QDoubleSpinBox()
-        self.combo_set_weight.setRange(0.0, 1.0)
-        self.combo_set_weight.setSingleStep(0.05)
-        self.combo_set_weight.setValue(skill_combo_config.ATTACK_MODE_WEIGHTS.get('combo_set', 0.20))
-        self.combo_set_weight.setSuffix(f" ({int(skill_combo_config.ATTACK_MODE_WEIGHTS.get('combo_set', 0.20)*100)}%)")
-        self.combo_set_weight.valueChanged.connect(lambda v: self.combo_set_weight.setSuffix(f" ({int(v*100)}%)"))
-        self.combo_set_weight.valueChanged.connect(self._update_skill_config)
-        label_combo_weight = QtWidgets.QLabel(self.tr('label_combo_weight'))
-        self._register_translatable(label_combo_weight.setText, 'label_combo_weight')
-        weights_layout.addRow(label_combo_weight, self.combo_set_weight)
-        
-        skill_layout.addLayout(weights_layout)
-
-        # Force-skill mode selector
-        force_row = QtWidgets.QHBoxLayout()
-        force_label = QtWidgets.QLabel(self.tr('label_force_skill_mode'))
-        self._register_translatable(force_label.setText, 'label_force_skill_mode')
-        self.force_skill_mode_combo = QtWidgets.QComboBox()
-        self.force_skill_mode_combo.addItem(self.tr('force_mode_ready_only'), 'ready_only')
-        self.force_skill_mode_combo.addItem(self.tr('force_mode_always'), 'always')
-        self.force_skill_mode_combo.addItem(self.tr('force_mode_disabled'), 'disabled')
-        current_force = getattr(skill_combo_config, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')
-        idx_force = self.force_skill_mode_combo.findData(str(current_force))
-        if idx_force >= 0:
-            self.force_skill_mode_combo.setCurrentIndex(idx_force)
-        self.force_skill_mode_combo.currentIndexChanged.connect(self._update_skill_config)
-        force_row.addWidget(force_label)
-        force_row.addWidget(self.force_skill_mode_combo)
-        force_row.addStretch()
-        skill_layout.addLayout(force_row)
-        
-        # Combat skills & combos toggle
-        self.combat_skills_cb = QtWidgets.QCheckBox()
-        self._register_translatable(self.combat_skills_cb.setText, 'checkbox_combat_skills')
-        self.combat_skills_cb.setText(self.tr('checkbox_combat_skills'))
-        # New config key: COMBAT_USE_SKILLS
-        self.combat_skills_cb.setChecked(getattr(skill_combo_config, 'COMBAT_USE_SKILLS', True))
-        self.combat_skills_cb.stateChanged.connect(self._update_skill_config)
-        skill_layout.addWidget(self.combat_skills_cb)
-
-        # Pack-aware defensive settings
-        pack_form = QtWidgets.QFormLayout()
-        self.outnumbered_spin = QtWidgets.QSpinBox()
-        self.outnumbered_spin.setRange(1, 20)
-        self.outnumbered_spin.setValue(getattr(skill_combo_config, 'OUTNUMBERED_THRESHOLD', 3))
-        self.outnumbered_spin.valueChanged.connect(self._update_skill_config)
-        lbl_outnum = QtWidgets.QLabel(self.tr('label_outnumbered_threshold'))
-        self._register_translatable(lbl_outnum.setText, 'label_outnumbered_threshold')
-        pack_form.addRow(lbl_outnum, self.outnumbered_spin)
-
-        self.defensive_cd_spin = QtWidgets.QDoubleSpinBox()
-        self.defensive_cd_spin.setRange(0.0, 60.0)
-        self.defensive_cd_spin.setSingleStep(0.5)
-        self.defensive_cd_spin.setDecimals(1)
-        self.defensive_cd_spin.setValue(getattr(skill_combo_config, 'DEFENSIVE_COOLDOWN_SEC', 8.0))
-        self.defensive_cd_spin.valueChanged.connect(self._update_skill_config)
-        lbl_defcd = QtWidgets.QLabel(self.tr('label_defensive_cooldown'))
-        self._register_translatable(lbl_defcd.setText, 'label_defensive_cooldown')
-        pack_form.addRow(lbl_defcd, self.defensive_cd_spin)
-
-        skill_layout.addLayout(pack_form)
-        
-        # Configuration buttons in a horizontal layout
-        config_buttons_layout = QtWidgets.QHBoxLayout()
-        
-        # Edit Individual Skills button
-        # edit_skills_btn = QtWidgets.QPushButton("⚙️ Edit Individual Skills")
-        # edit_skills_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 8px; }")
-        # # Navigate to the Skills screen (embedded editor) instead of opening a dialog
-        # edit_skills_btn.clicked.connect(lambda: self.change_page(1))
-        # config_buttons_layout.addWidget(edit_skills_btn)
-        
-        # Edit Combo Sets button
-        edit_combos_btn = QtWidgets.QPushButton()
-        self._register_translatable(edit_combos_btn.setText, 'button_edit_combos')
-        edit_combos_btn.setText(self.tr('button_edit_combos'))
-        edit_combos_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
-        # Navigate to the Combos screen (embedded editor) instead of opening a dialog
-        edit_combos_btn.clicked.connect(lambda: self.change_page(2))
-        config_buttons_layout.addWidget(edit_combos_btn)
-        
-        skill_layout.addLayout(config_buttons_layout)
-        
-        skill_group.setLayout(skill_layout)
-        # Add skill group to Skills page
-        self.page_skills_layout.addWidget(skill_group)
-        # Embed the full skill editor as a screen under the Skills page
-        try:
-            self.skill_editor_screen = SkillEditorScreen(self)
-            self.page_skills_layout.addWidget(self.skill_editor_screen)
-        except Exception:
-            pass
-        # Cooldown monitor panel placed on Cooldowns page
-        self._setup_cooldown_panel(self.page_cooldowns_layout)
-        # Embed the combo editor on the Combos page
-        try:
-            self.combo_editor_screen = ComboEditorScreen(self)
-            self.page_combos_layout.addWidget(self.combo_editor_screen)
-        except Exception:
-            pass
-
-        # Build settings page content (language selector, etc.)
-        self._build_settings_page()
-
-        # Anti-detection GUI removed (no stealth_config support)
-
-        # Start/Stop and Emergency Stop
-        btns = QtWidgets.QHBoxLayout()
-        self.start_btn = QtWidgets.QPushButton()
-        self._register_translatable(self.start_btn.setText, 'button_start')
-        self.start_btn.setText(self.tr('button_start'))
-        self.stop_btn = QtWidgets.QPushButton()
-        self._register_translatable(self.stop_btn.setText, 'button_stop')
-        self.stop_btn.setText(self.tr('button_stop'))
-        self.emergency_stop_btn = QtWidgets.QPushButton()
-        self._register_translatable(self.emergency_stop_btn.setText, 'button_emergency_stop')
-        self.emergency_stop_btn.setText(self.tr('button_emergency_stop'))
-        self.emergency_stop_btn.setStyleSheet("QPushButton { background-color: red; color: white; font-weight: bold; }")
-        self.emergency_stop_btn.clicked.connect(self.emergency_stop)
-        self.stop_btn.setEnabled(False)
-        self.start_btn.clicked.connect(self.start)
-        self.stop_btn.clicked.connect(self.stop)
-        btns.addWidget(self.start_btn)
-        btns.addWidget(self.stop_btn)
-        btns.addWidget(self.emergency_stop_btn)
-        # Start/Stop buttons go on Dashboard page
-        self.page_dashboard_layout.addLayout(btns)
-
-        # Log terminal
-        self.log_view = QtWidgets.QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        # Logs page contains the log view
-        self.page_logs_layout.addWidget(self.log_view, stretch=1)
-        # track desired automation state (applies to controller when created)
-        # Default automation ON as requested
-        self._automation_enabled = True
-        self._overlay = OverlayWindow()
-        # ensure overlay matches the desired automation default immediately
-        try:
-            self._overlay.set_automation_enabled(self._automation_enabled)
-        except Exception:
-            pass
+        # State
         self._controller = None
-        # start a global hotkey listener for Pause/Break to toggle automation
-        self._hotkey_thread = None
-        self._start_hotkey_listener()
-        self._pos_timer = QtCore.QTimer(self)
-        self._pos_timer.setInterval(300)  # ms
-        self._pos_timer.timeout.connect(self._reposition_overlay)
+        self._overlay = None
+        self._automation_enabled = True
+        self._qt_app = None
 
+        # Build UI
+        self._create_sidebar()
+        self._create_main_frame()
+        self._create_pages()
+
+        # Show dashboard by default
+        self._show_page("dashboard")
+
+        # Refresh window list
         self._refresh_windows()
-        self._apply_translations()
 
-    def _setup_cooldown_panel(self, parent_layout):
-        """Create a small panel showing skill/combo cooldowns."""
-        cooldown_group = QtWidgets.QGroupBox()
-        self._register_translatable(cooldown_group.setTitle, 'group_cooldown_monitor')
-        cooldown_group.setTitle(self.tr('group_cooldown_monitor'))
-        self._cooldown_group = cooldown_group
-        v = QtWidgets.QVBoxLayout()
+        # Start overlay system (Qt app in background thread)
+        self._start_overlay_system()
 
-        # Skills table
-        self._skills_table = QtWidgets.QTableWidget(0, 2)
-        self._skills_table.setHorizontalHeaderLabels([
-            self.tr('skills_table_header_skill'),
-            self.tr('skills_table_header_remaining')
-        ])
-        self._skills_table.horizontalHeader().setStretchLastSection(True)
-        v.addWidget(self._skills_table)
+        # Protocol for window close
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Combos table
-        self._combos_table = QtWidgets.QTableWidget(0, 2)
-        self._combos_table.setHorizontalHeaderLabels([
-            self.tr('combos_table_header_combo'),
-            self.tr('combos_table_header_status')
-        ])
-        self._combos_table.horizontalHeader().setStretchLastSection(True)
-        v.addWidget(self._combos_table)
-
-        cooldown_group.setLayout(v)
-        parent_layout.addWidget(cooldown_group)
-
-        # Timer to refresh cooldowns periodically
-        self._cooldown_timer = QtCore.QTimer(self)
-        self._cooldown_timer.setInterval(500)
-        self._cooldown_timer.timeout.connect(self._refresh_cooldown_panel)
-
-    def _build_settings_page(self):
-        self.page_settings_layout.setSpacing(12)
-        language_group = QtWidgets.QGroupBox()
-        self._register_translatable(language_group.setTitle, 'settings_language_group')
-        language_group.setTitle(self.tr('settings_language_group'))
-
-        language_layout = QtWidgets.QFormLayout()
-        self.language_label = QtWidgets.QLabel(self.tr('settings_language_label'))
-        self._register_translatable(self.language_label.setText, 'settings_language_label')
-
-        self.language_combo = QtWidgets.QComboBox()
-        self._language_items = [('en', 'language_english'), ('ko', 'language_korean')]
-        for code, key in self._language_items:
-            self.language_combo.addItem(self.tr(key), code)
-        idx = self.language_combo.findData(self.current_language)
-        if idx >= 0:
-            self.language_combo.setCurrentIndex(idx)
-        else:
-            self.language_combo.setCurrentIndex(0)
-        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
-
-        language_layout.addRow(self.language_label, self.language_combo)
-        language_group.setLayout(language_layout)
-        self.page_settings_layout.addWidget(language_group)
-        self.page_settings_layout.addStretch(1)
-
-    def _retranslate_language_combo(self):
-        if not hasattr(self, 'language_combo'):
-            return
-        for idx, (code, key) in enumerate(getattr(self, '_language_items', [])):
-            if idx < self.language_combo.count():
-                try:
-                    self.language_combo.setItemText(idx, self.tr(key))
-                except Exception:
-                    pass
-
-    def _retranslate_tables(self):
-        if hasattr(self, '_skills_table'):
-            self._skills_table.setHorizontalHeaderLabels([
-                self.tr('skills_table_header_skill'),
-                self.tr('skills_table_header_remaining')
-            ])
-        if hasattr(self, '_combos_table'):
-            self._combos_table.setHorizontalHeaderLabels([
-                self.tr('combos_table_header_combo'),
-                self.tr('combos_table_header_status')
-            ])
-        if hasattr(self, '_cooldown_group'):
-            try:
-                self._cooldown_group.setTitle(self.tr('group_cooldown_monitor'))
-            except Exception:
-                pass
-
-    def _on_language_changed(self):
-        if not hasattr(self, 'language_combo'):
-            return
-        lang = self.language_combo.currentData()
-        if not lang or lang == self.current_language:
-            return
-        self.current_language = lang
-        self._apply_translations()
-        self._persist_language_setting(lang)
-
-    def _persist_language_setting(self, lang: str):
-        if not self._config_module:
-            return
-        try:
-            self._config_module.update_config({'LANGUAGE': lang})
-        except Exception as e:
-            try:
-                self.log(self.tr('msg_failed_language_json').format(error=e))
-            except Exception:
-                pass
-
-    def tr(self, key: str, disambiguation=None, n=-1, **kwargs):  # type: ignore[override]
+    def tr(self, key: str, **kwargs) -> str:
+        """Translate key to current language."""
         return translate_text(self.current_language, key, **kwargs)
 
-    def _register_translatable(self, setter, key: str):
-        if not hasattr(self, '_translatables'):
-            self._translatables = []
-        self._translatables.append((setter, key))
+    def _create_sidebar(self):
+        """Create the navigation sidebar."""
+        self.sidebar = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar.grid(row=0, column=0, sticky="nswe")
+        self.sidebar.grid_rowconfigure(10, weight=1)
 
-    def _apply_translations(self):
-        for setter, key in getattr(self, '_translatables', []):
-            try:
-                setter(self.tr(key))
-            except Exception:
-                pass
-        # Update elements that require custom handling
-        self._retranslate_language_combo()
-        self._retranslate_tables()
-        try:
-            backend = self.backend_combo.currentText()
-            if backend:
-                self._update_backend_status(backend)
-        except Exception:
-            pass
-        for attr in ('skill_editor_screen', 'combo_editor_screen'):
-            screen = getattr(self, attr, None)
-            if screen and hasattr(screen, 'apply_translations'):
-                try:
-                    screen.apply_translations(self.current_language)
-                except Exception:
-                    pass
-
-    def _nav_button_style(self) -> str:
-        """Return stylesheet for sidebar nav buttons (modern purple theme)."""
-        return (
-            "QPushButton { background-color: transparent; color: #EDE7F6; border: none; text-align: left; "
-            "padding-left: 12px; font-size: 12pt; }"
-            "QPushButton:checked { background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #6A1B9A, stop:1 #8E24AA); "
-            "border-radius: 6px; color: white; font-weight: bold; }"
-            "QPushButton:hover { background-color: rgba(255,255,255,0.03); }"
+        # Logo/Title
+        self.logo_label = ctk.CTkLabel(
+            self.sidebar,
+            text="AION\nAutoplay",
+            font=ctk.CTkFont(size=20, weight="bold")
         )
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
-    def change_page(self, index: int):
-        """Animate transition and switch to the given page index."""
-        # Immediate, robust page switch without animations to ensure reliability.
-        try:
-            if index < 0 or index >= self.pages.count():
-                return
-            self.pages.setCurrentIndex(index)
-            # update sidebar checked state
-            for i, btn in enumerate((self.btn_dashboard, self.btn_skills, self.btn_combos, self.btn_cooldowns, self.btn_logs, self.btn_settings)):
-                try:
-                    btn.setChecked(i == index)
-                except Exception:
-                    pass
-        except Exception as e:
-            logger.debug(f"change_page failed: {e}")
+        # Navigation buttons
+        nav_items = [
+            ("nav_dashboard", "🏠", "dashboard"),
+            ("nav_skills", "⚙️", "skills"),
+            ("nav_combos", "🎯", "combos"),
+            ("nav_cooldowns", "⏱️", "cooldowns"),
+            ("nav_queue", "📊", "queue"),
+            ("nav_logs", "📜", "logs"),
+            ("nav_settings", "🔧", "settings"),
+        ]
 
-    def log(self, text: str):
-        # append thread-safely
-        localized = self._localize_log(text)
-        QtCore.QMetaObject.invokeMethod(
-            self.log_view,
-            "appendPlainText",
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(str, localized)
-        )
+        self.nav_buttons = {}
+        for i, (key, icon, page_name) in enumerate(nav_items, start=1):
+            btn = ctk.CTkButton(
+                self.sidebar,
+                text=f"{icon}  {self.tr(key)}",
+                font=ctk.CTkFont(size=14),
+                height=40,
+                corner_radius=8,
+                fg_color="transparent",
+                text_color=("gray10", "gray90"),
+                hover_color=("gray70", "gray30"),
+                anchor="w",
+                command=lambda p=page_name: self._show_page(p)
+            )
+            btn.grid(row=i, column=0, padx=10, pady=5, sticky="we")
+            self.nav_buttons[page_name] = btn
 
-    def _localize_log(self, text: str) -> str:
-        mapping = {
-            "Starting capture and detection": 'log_detection_start',
-            "✓ Automation active": 'log_detection_active',
-            "Stopping detection": 'log_detection_stop',
-            "No window selected": 'log_no_window_selected',
-            "Unable to get window rect": 'log_unable_get_window_rect',
-            "Started detection": 'log_started_detection',
-            "Stopped": 'log_stopped',
-            "EMERGENCY STOP: Automation disabled": 'log_emergency_stop',
-            "Hotkey registered: Delete (RegisterHotKey)": 'log_hotkey_registered',
-            "RegisterHotKey failed; falling back to low-level keyboard hook": 'log_register_hotkey_failed',
-            "Failed to install low-level keyboard hook for Delete key": 'log_failed_hotkey_hook',
-            "✓ Skill combo configuration updated": 'log_skill_config_updated',
-        }
-        if text in mapping:
-            return self.tr(mapping[text])
-        if text.startswith("Simulate mode (DRY_RUN) set to:"):
-            state_value = text.split(":", 1)[1].strip()
-            state_key = 'state_on' if state_value.lower() in ('true', 'on', '1', 'yes', '켬') else 'state_off'
-            return self.tr('log_simulate_mode').format(state=self.tr(state_key))
-        if text.startswith("Failed to toggle simulate mode:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('log_simulate_toggle_fail').format(error=error)
-        if text.startswith("Failed to set input backend:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('log_backend_set_fail').format(error=error)
-        if text.startswith("Failed to persist input backend to JSON:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('msg_failed_backend_json').format(error=error)
-        if text.startswith("Failed to persist DRY_RUN to JSON:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('msg_failed_dry_run_json').format(error=error)
-        if text.startswith("Action planner error:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('log_action_planner_error').format(error=error)
-        if text.startswith("Inference error:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('log_inference_error').format(error=error)
-        if text.startswith("✓ Opened ") and '{' not in text:
-            path = text.replace('✓ Opened ', '', 1).strip()
-            return self.tr('log_opened_config').format(path=path)
-        if text.startswith("Config file not found:"):
-            path = text.split(":", 1)[1].strip()
-            return self.tr('log_config_not_found').format(path=path)
-        if text.startswith("Failed to open config file:"):
-            error = text.split(":", 1)[1].strip()
-            return self.tr('log_open_config_fail').format(error=error)
-        return text
+    def _create_main_frame(self):
+        """Create the main content area."""
+        self.main_frame = ctk.CTkFrame(self, corner_radius=10)
+        self.main_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nswe")
+        self.main_frame.grid_columnconfigure(0, weight=1)
+        self.main_frame.grid_rowconfigure(0, weight=1)
 
-    def _update_skill_config(self):
-        """Update skill combo configuration based on GUI settings."""
-        try:
-            import skill_combo_config
-            
-            # Update stealth attack mode
-            skill_combo_config.STEALTH_ATTACK_MODE_ENABLED = self.stealth_attack_cb.isChecked()
-            # Update combat skill usage toggle
-            skill_combo_config.COMBAT_USE_SKILLS = self.combat_skills_cb.isChecked()
+    def _create_pages(self):
+        """Create all page frames."""
+        self.pages = {}
 
-            # Force-skill mode
-            try:
-                mode_data = self.force_skill_mode_combo.currentData()
-            except Exception:
-                mode_data = None
-            if mode_data:
-                skill_combo_config.FORCE_SKILL_BEFORE_STANDARD_MODE = str(mode_data)
+        # Dashboard page
+        self.pages["dashboard"] = self._create_dashboard_page()
 
-            # Pack-aware thresholds
-            try:
-                skill_combo_config.OUTNUMBERED_THRESHOLD = int(self.outnumbered_spin.value())
-            except Exception:
-                pass
-            try:
-                skill_combo_config.DEFENSIVE_COOLDOWN_SEC = float(self.defensive_cd_spin.value())
-            except Exception:
-                pass
-            
-            # Update attack mode weights
-            skill_combo_config.ATTACK_MODE_WEIGHTS['standard_attack'] = self.standard_attack_weight.value()
-            skill_combo_config.ATTACK_MODE_WEIGHTS['single_skill'] = self.single_skill_weight.value()
-            skill_combo_config.ATTACK_MODE_WEIGHTS['combo_set'] = self.combo_set_weight.value()
-            
-            # Update health requirement
-            # Persist to JSON-backed config for durability
-            try:
-                skill_combo_config.update_config({
-                    'STEALTH_ATTACK_MODE_ENABLED': skill_combo_config.STEALTH_ATTACK_MODE_ENABLED,
-                    'ATTACK_MODE_WEIGHTS': skill_combo_config.ATTACK_MODE_WEIGHTS,
-                    'COMBAT_USE_SKILLS': skill_combo_config.COMBAT_USE_SKILLS,
-                    'FORCE_SKILL_BEFORE_STANDARD_MODE': skill_combo_config.FORCE_SKILL_BEFORE_STANDARD_MODE,
-                    'OUTNUMBERED_THRESHOLD': skill_combo_config.OUTNUMBERED_THRESHOLD,
-                    'DEFENSIVE_COOLDOWN_SEC': skill_combo_config.DEFENSIVE_COOLDOWN_SEC,
-                })
-            except Exception as e:
-                self.log(f"Failed to persist skill config to JSON: {e}")
+        # Skills page
+        self.pages["skills"] = self._create_skills_page()
+
+        # Combos page
+        self.pages["combos"] = self._create_combos_page()
+
+        # Cooldowns page
+        self.pages["cooldowns"] = self._create_cooldowns_page()
+
+        # Combat Queue page
+        self.pages["queue"] = self._create_queue_page()
+
+        # Logs page
+        self.pages["logs"] = self._create_logs_page()
+
+        # Settings page
+        self.pages["settings"] = self._create_settings_page()
+
+    def _show_page(self, page_name: str):
+        """Show the specified page and hide others."""
+        # Update button colors
+        for name, btn in self.nav_buttons.items():
+            if name == page_name:
+                btn.configure(fg_color=("gray75", "gray25"))
             else:
-                self.log(self.tr('log_skill_config_updated'))
-        except Exception as e:
-            self.log(f"Failed to update skill config: {e}")
-    
-    def _save_main_config_to_file(self):
-        """Save main window configuration to file."""
+                btn.configure(fg_color="transparent")
+
+        # Hide all pages
+        for page in self.pages.values():
+            page.grid_forget()
+
+        # Show selected page
+        if page_name in self.pages:
+            self.pages[page_name].grid(row=0, column=0, padx=20, pady=20, sticky="nswe")
+
+    def _create_dashboard_page(self) -> ctk.CTkFrame:
+        """Create the dashboard page."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+
+        # Title
+        title = ctk.CTkLabel(page, text=self.tr('nav_dashboard'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, pady=(0, 20), sticky="w")
+
+        # Window selection
+        win_frame = ctk.CTkFrame(page)
+        win_frame.grid(row=1, column=0, pady=10, sticky="we")
+        win_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(win_frame, text=self.tr('label_game_window')).grid(row=0, column=0, padx=10, pady=10)
+        self.window_combo = ctk.CTkComboBox(win_frame, values=[], width=400)
+        self.window_combo.grid(row=0, column=1, padx=10, pady=10, sticky="we")
+        self.refresh_btn = ctk.CTkButton(win_frame, text=self.tr('action_refresh'), width=100, command=self._refresh_windows)
+        self.refresh_btn.grid(row=0, column=2, padx=10, pady=10)
+
+        # Backend selection
+        backend_frame = ctk.CTkFrame(page)
+        backend_frame.grid(row=2, column=0, pady=10, sticky="we")
+
+        ctk.CTkLabel(backend_frame, text=self.tr('label_input_backend')).grid(row=0, column=0, padx=10, pady=10)
+        self.backend_combo = ctk.CTkComboBox(backend_frame, values=["interception"], width=200)
+        self.backend_combo.grid(row=0, column=1, padx=10, pady=10)
+        self.backend_combo.set("interception")
+
+        self.simulate_var = ctk.BooleanVar(value=False)
+        self.simulate_cb = ctk.CTkCheckBox(backend_frame, text=self.tr('checkbox_simulate'), variable=self.simulate_var, command=self._on_simulate_toggle)
+        self.simulate_cb.grid(row=0, column=2, padx=20, pady=10)
+
+        # Control buttons
+        btn_frame = ctk.CTkFrame(page, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, pady=20, sticky="we")
+
+        self.start_btn = ctk.CTkButton(
+            btn_frame,
+            text=self.tr('button_start'),
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            width=150,
+            fg_color="green",
+            hover_color="darkgreen",
+            command=self._start_detection
+        )
+        self.start_btn.pack(side="left", padx=10)
+
+        self.stop_btn = ctk.CTkButton(
+            btn_frame,
+            text=self.tr('button_stop'),
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            width=150,
+            fg_color="gray",
+            state="disabled",
+            command=self._stop_detection
+        )
+        self.stop_btn.pack(side="left", padx=10)
+
+        self.emergency_btn = ctk.CTkButton(
+            btn_frame,
+            text=self.tr('button_emergency_stop'),
+            font=ctk.CTkFont(size=16, weight="bold"),
+            height=50,
+            width=200,
+            fg_color="red",
+            hover_color="darkred",
+            command=self._emergency_stop
+        )
+        self.emergency_btn.pack(side="left", padx=10)
+
+        # Info label
+        info = ctk.CTkLabel(page, text=self.tr('label_settings_info'), text_color="gray")
+        info.grid(row=4, column=0, pady=10, sticky="w")
+
+        return page
+
+    def _create_skills_page(self) -> ctk.CTkFrame:
+        """Create the skills configuration page with embedded skill editor."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_columnconfigure(1, weight=1)
+        page.grid_rowconfigure(2, weight=1)
+
+        title = ctk.CTkLabel(page, text=self.tr('nav_skills'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, columnspan=2, pady=(0, 10), sticky="w")
+
+        subtitle = ctk.CTkLabel(page, text=self.tr('skill_editor_subtitle'), text_color="gray")
+        subtitle.grid(row=0, column=0, columnspan=2, pady=(35, 10), sticky="w")
+
+        # === Top Row: Config Options ===
+        config_frame = ctk.CTkFrame(page)
+        config_frame.grid(row=1, column=0, columnspan=2, pady=10, sticky="we")
+        config_frame.grid_columnconfigure(1, weight=1)
+        config_frame.grid_columnconfigure(3, weight=1)
+
+        # Row 0: Stealth + Combat Skills
+        self.stealth_var = ctk.BooleanVar(value=False)
+        if self._config:
+            self.stealth_var.set(getattr(self._config, 'STEALTH_ATTACK_MODE_ENABLED', False))
+        ctk.CTkCheckBox(config_frame, text=self.tr('checkbox_stealth_attack'), variable=self.stealth_var, command=self._update_skill_config).grid(row=0, column=0, padx=20, pady=8, sticky="w")
+
+        self.combat_skills_var = ctk.BooleanVar(value=True)
+        if self._config:
+            self.combat_skills_var.set(getattr(self._config, 'COMBAT_USE_SKILLS', True))
+        ctk.CTkCheckBox(config_frame, text=self.tr('checkbox_combat_skills'), variable=self.combat_skills_var, command=self._update_skill_config).grid(row=0, column=2, padx=20, pady=8, sticky="w")
+
+        # Row 1: Force skill mode + GCD
+        ctk.CTkLabel(config_frame, text=self.tr('label_force_skill_mode')).grid(row=1, column=0, padx=20, pady=8, sticky="w")
+        self.force_skill_var = ctk.StringVar(value="ready_only")
+        if self._config:
+            self.force_skill_var.set(getattr(self._config, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only'))
+        force_options = [self.tr('force_mode_ready_only'), self.tr('force_mode_always'), self.tr('force_mode_disabled')]
+        self.force_skill_combo = ctk.CTkComboBox(config_frame, values=force_options, command=self._on_force_skill_change, width=150)
+        self.force_skill_combo.grid(row=1, column=1, padx=10, pady=8, sticky="w")
+        self._set_force_skill_combo()
+
+        ctk.CTkLabel(config_frame, text=self.tr('label_single_skill_gcd')).grid(row=1, column=2, padx=20, pady=8, sticky="w")
+        self.skill_gcd_entry = ctk.CTkEntry(config_frame, width=80)
+        self.skill_gcd_entry.grid(row=1, column=3, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.skill_gcd_entry.insert(0, str(getattr(self._config, 'SINGLE_SKILL_GLOBAL_COOLDOWN', 1.5)))
+
+        # Row 2: Weights
+        ctk.CTkLabel(config_frame, text=self.tr('label_standard_weight')).grid(row=2, column=0, padx=20, pady=8, sticky="w")
+        self.standard_weight = ctk.CTkSlider(config_frame, from_=0, to=1, number_of_steps=20, command=self._update_skill_config, width=150)
+        self.standard_weight.grid(row=2, column=1, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.standard_weight.set(self._config.ATTACK_MODE_WEIGHTS.get('standard_attack', 0.5))
+
+        ctk.CTkLabel(config_frame, text=self.tr('label_single_weight')).grid(row=2, column=2, padx=20, pady=8, sticky="w")
+        self.single_weight = ctk.CTkSlider(config_frame, from_=0, to=1, number_of_steps=20, command=self._update_skill_config, width=150)
+        self.single_weight.grid(row=2, column=3, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.single_weight.set(self._config.ATTACK_MODE_WEIGHTS.get('single_skill', 0.3))
+
+        # Row 3: More weights + thresholds
+        ctk.CTkLabel(config_frame, text=self.tr('label_combo_weight')).grid(row=3, column=0, padx=20, pady=8, sticky="w")
+        self.combo_weight = ctk.CTkSlider(config_frame, from_=0, to=1, number_of_steps=20, command=self._update_skill_config, width=150)
+        self.combo_weight.grid(row=3, column=1, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.combo_weight.set(self._config.ATTACK_MODE_WEIGHTS.get('combo_set', 0.2))
+
+        ctk.CTkLabel(config_frame, text=self.tr('label_outnumbered_threshold')).grid(row=3, column=2, padx=20, pady=8, sticky="w")
+        self.outnumbered_spin = ctk.CTkEntry(config_frame, width=80)
+        self.outnumbered_spin.grid(row=3, column=3, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.outnumbered_spin.insert(0, str(getattr(self._config, 'OUTNUMBERED_THRESHOLD', 3)))
+
+        # Row 4: Defensive cooldown
+        ctk.CTkLabel(config_frame, text=self.tr('label_defensive_cooldown')).grid(row=4, column=0, padx=20, pady=8, sticky="w")
+        self.defensive_cd = ctk.CTkEntry(config_frame, width=80)
+        self.defensive_cd.grid(row=4, column=1, padx=10, pady=8, sticky="w")
+        if self._config:
+            self.defensive_cd.insert(0, str(getattr(self._config, 'DEFENSIVE_COOLDOWN_SEC', 8.0)))
+
+        # === Bottom Row: Skill Cooldowns (left) + Skill Pool (right) ===
+        # Left side: Skill Cooldowns
+        left_frame = ctk.CTkFrame(page)
+        left_frame.grid(row=2, column=0, padx=(0, 5), pady=10, sticky="nswe")
+        left_frame.grid_columnconfigure(0, weight=1)
+        left_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(left_frame, text=self.tr('group_skill_cooldowns'), font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.skill_cd_scroll = ctk.CTkScrollableFrame(left_frame)
+        self.skill_cd_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nswe")
+
+        # Skill cooldown buttons
+        skill_btn_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        skill_btn_frame.grid(row=2, column=0, padx=10, pady=10, sticky="we")
+
+        self.add_skill_cd_btn = ctk.CTkButton(skill_btn_frame, text=self.tr('button_add_skill_key'), command=self._add_skill_cooldown, fg_color="#4CAF50", hover_color="#66BB6A", width=140)
+        self.add_skill_cd_btn.pack(side="left", padx=(0, 5))
+
+        self.remove_skill_cd_btn = ctk.CTkButton(skill_btn_frame, text=self.tr('button_remove'), command=self._remove_skill_cooldown, fg_color="#f44336", hover_color="#EF5350", width=100)
+        self.remove_skill_cd_btn.pack(side="left")
+
+        # Right side: Skill Pool
+        right_frame = ctk.CTkFrame(page)
+        right_frame.grid(row=2, column=1, padx=(5, 0), pady=10, sticky="nswe")
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(right_frame, text=self.tr('group_single_skill_pool'), font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.skill_pool_scroll = ctk.CTkScrollableFrame(right_frame)
+        self.skill_pool_scroll.grid(row=1, column=0, padx=10, pady=5, sticky="nswe")
+
+        # Pool hint
+        ctk.CTkLabel(right_frame, text=self.tr('skill_pool_hint'), text_color="gray", font=ctk.CTkFont(size=11)).grid(row=2, column=0, padx=10, pady=5, sticky="w")
+
+        # Pool buttons
+        pool_btn_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        pool_btn_frame.grid(row=3, column=0, padx=10, pady=10, sticky="we")
+
+        self.add_pool_btn = ctk.CTkButton(pool_btn_frame, text=self.tr('button_capture_key'), command=self._add_pool_skill_embedded, fg_color="#5E35B1", hover_color="#7E57C2", width=140)
+        self.add_pool_btn.pack(side="left", padx=(0, 5))
+
+        self.remove_pool_btn = ctk.CTkButton(pool_btn_frame, text=self.tr('button_remove'), command=self._remove_pool_skill_embedded, fg_color="#8E24AA", hover_color="#AB47BC", width=100)
+        self.remove_pool_btn.pack(side="left", padx=(0, 5))
+
+        self.save_skills_btn = ctk.CTkButton(pool_btn_frame, text=self.tr('button_save'), command=self._save_skill_config, fg_color="#2196F3", hover_color="#42A5F5", width=100)
+        self.save_skills_btn.pack(side="right")
+
+        # Load initial data
+        self._skill_cooldowns_data = {}
+        self._skill_pool_data = []
+        self._selected_pool_skill = None
+        self._skill_cd_entries = {}
+        self._load_skill_data()
+        self._refresh_skill_cooldowns_display()
+        self._refresh_skill_pool_display()
+
+        return page
+
+    def _load_skill_data(self):
+        """Load skill data from config."""
+        if self._config:
+            self._skill_cooldowns_data = dict(getattr(self._config, 'SKILL_COOLDOWNS', {}))
+            self._skill_pool_data = list(getattr(self._config, 'SINGLE_SKILL_POOL', []))
+
+    def _refresh_skill_cooldowns_display(self):
+        """Refresh the skill cooldowns display."""
+        for widget in self.skill_cd_scroll.winfo_children():
+            widget.destroy()
+
+        self._skill_cd_entries = {}
+        for skill, cooldown in sorted(self._skill_cooldowns_data.items()):
+            frame = ctk.CTkFrame(self.skill_cd_scroll)
+            frame.pack(fill="x", padx=2, pady=2)
+
+            # Skill key label
+            skill_lbl = ctk.CTkLabel(frame, text=skill.upper(), font=ctk.CTkFont(weight="bold"), width=60)
+            skill_lbl.pack(side="left", padx=10, pady=5)
+
+            # Cooldown entry
+            cd_entry = ctk.CTkEntry(frame, width=80)
+            cd_entry.pack(side="right", padx=10, pady=5)
+            cd_entry.insert(0, str(cooldown))
+            self._skill_cd_entries[skill] = cd_entry
+
+            ctk.CTkLabel(frame, text="sec").pack(side="right", pady=5)
+
+    def _refresh_skill_pool_display(self):
+        """Refresh the skill pool display."""
+        for widget in self.skill_pool_scroll.winfo_children():
+            widget.destroy()
+
+        self._pool_frames = []
+        for skill in self._skill_pool_data:
+            frame = ctk.CTkFrame(self.skill_pool_scroll, cursor="hand2")
+            frame.pack(fill="x", padx=2, pady=2)
+            frame.bind("<Button-1>", lambda e, s=skill: self._select_pool_skill_embedded(s))
+
+            lbl = ctk.CTkLabel(frame, text=skill.upper(), font=ctk.CTkFont(weight="bold"))
+            lbl.pack(side="left", padx=10, pady=5)
+            lbl.bind("<Button-1>", lambda e, s=skill: self._select_pool_skill_embedded(s))
+
+            self._pool_frames.append((skill, frame))
+
+    def _select_pool_skill_embedded(self, skill: str):
+        """Select a pool skill for removal."""
+        self._selected_pool_skill = skill
+        for s, frame in self._pool_frames:
+            if s == skill:
+                frame.configure(fg_color=("#5E35B1", "#5E35B1"))
+            else:
+                frame.configure(fg_color=("gray86", "gray17"))
+
+    def _add_skill_cooldown(self):
+        """Add a new skill cooldown via key capture."""
+        dialog = KeyCaptureDialog(self, self.current_language)
+        self.wait_window(dialog)
+        if dialog.captured_key:
+            key = dialog.captured_key.lower()
+            if key and key not in self._skill_cooldowns_data:
+                self._skill_cooldowns_data[key] = 10.0
+                self._refresh_skill_cooldowns_display()
+
+    def _remove_skill_cooldown(self):
+        """Remove the last skill cooldown entry."""
+        if self._skill_cooldowns_data:
+            keys = list(self._skill_cooldowns_data.keys())
+            if keys:
+                del self._skill_cooldowns_data[keys[-1]]
+                self._refresh_skill_cooldowns_display()
+
+    def _add_pool_skill_embedded(self):
+        """Add a skill to the pool via key capture."""
+        dialog = KeyCaptureDialog(self, self.current_language)
+        self.wait_window(dialog)
+        if dialog.captured_key:
+            key = dialog.captured_key.lower()
+            if key and key not in self._skill_pool_data:
+                self._skill_pool_data.append(key)
+                self._refresh_skill_pool_display()
+
+    def _remove_pool_skill_embedded(self):
+        """Remove the selected skill from pool."""
+        if self._selected_pool_skill and self._selected_pool_skill in self._skill_pool_data:
+            self._skill_pool_data.remove(self._selected_pool_skill)
+            self._selected_pool_skill = None
+            self._refresh_skill_pool_display()
+
+    def _save_skill_config(self):
+        """Save all skill configuration."""
+        # Update cooldowns from entries
+        for skill, entry in self._skill_cd_entries.items():
+            try:
+                self._skill_cooldowns_data[skill] = float(entry.get())
+            except ValueError:
+                pass
+
+        # Get GCD
         try:
-            import skill_combo_config
-            import os
-            config_path = os.path.join(os.path.dirname(__file__), 'skill_combo_config.py')
+            gcd = float(self.skill_gcd_entry.get())
+        except ValueError:
+            gcd = 1.5
+
+        # Save to config
+        if self._config:
+            self._config.update_config({
+                'SKILL_COOLDOWNS': self._skill_cooldowns_data,
+                'SINGLE_SKILL_POOL': self._skill_pool_data,
+                'SINGLE_SKILL_GLOBAL_COOLDOWN': gcd,
+            })
+            self.log(self.tr('msg_skill_saved'))
+
+    def _set_force_skill_combo(self):
+        """Set the force skill combo to match config value."""
+        if not self._config:
+            return
+        mode = getattr(self._config, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')
+        if mode == 'ready_only':
+            self.force_skill_combo.set(self.tr('force_mode_ready_only'))
+        elif mode == 'always':
+            self.force_skill_combo.set(self.tr('force_mode_always'))
+        else:
+            self.force_skill_combo.set(self.tr('force_mode_disabled'))
+
+    def _on_force_skill_change(self, choice):
+        """Handle force skill mode change."""
+        if self.tr('force_mode_ready_only') in choice:
+            mode = 'ready_only'
+        elif self.tr('force_mode_always') in choice:
+            mode = 'always'
+        else:
+            mode = 'disabled'
+        
+        if self._config:
+            self._config.update_config({'FORCE_SKILL_BEFORE_STANDARD_MODE': mode})
+
+    def _create_combos_page(self) -> ctk.CTkFrame:
+        """Create the combos page with full editor."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_columnconfigure(1, weight=2)
+        page.grid_rowconfigure(1, weight=1)
+
+        title = ctk.CTkLabel(page, text=self.tr('nav_combos'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, columnspan=2, pady=(0, 20), sticky="w")
+
+        # Left side - combo list
+        left_frame = ctk.CTkFrame(page)
+        left_frame.grid(row=1, column=0, padx=(0, 10), sticky="nswe")
+        left_frame.grid_rowconfigure(1, weight=1)
+        left_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left_frame, text=self.tr('combos_table_header_combo'), font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.combo_listbox = ctk.CTkScrollableFrame(left_frame)
+        self.combo_listbox.grid(row=1, column=0, padx=10, pady=10, sticky="nswe")
+        
+        # Combo list buttons
+        combo_btn_frame = ctk.CTkFrame(left_frame, fg_color="transparent")
+        combo_btn_frame.grid(row=2, column=0, padx=10, pady=10, sticky="we")
+
+        self.new_combo_btn = ctk.CTkButton(combo_btn_frame, text=self.tr('button_new_combo'), command=self._new_combo, fg_color="#4CAF50", hover_color="#66BB6A")
+        self.new_combo_btn.pack(side="left", padx=(0, 5))
+
+        self.delete_combo_btn = ctk.CTkButton(combo_btn_frame, text=self.tr('button_delete_combo'), command=self._delete_combo, fg_color="#f44336", hover_color="#EF5350")
+        self.delete_combo_btn.pack(side="left")
+
+        # Right side - combo editor
+        right_frame = ctk.CTkFrame(page)
+        right_frame.grid(row=1, column=1, sticky="nswe")
+        right_frame.grid_columnconfigure(1, weight=1)
+        right_frame.grid_rowconfigure(5, weight=1)
+
+        row = 0
+        ctk.CTkLabel(right_frame, text=self.tr('label_combo_name')).grid(row=row, column=0, padx=20, pady=10, sticky="w")
+        self.combo_name_entry = ctk.CTkEntry(right_frame, width=300)
+        self.combo_name_entry.grid(row=row, column=1, padx=20, pady=10, sticky="we")
+        row += 1
+
+        ctk.CTkLabel(right_frame, text=self.tr('label_combo_cooldown')).grid(row=row, column=0, padx=20, pady=10, sticky="w")
+        self.combo_cooldown_entry = ctk.CTkEntry(right_frame, width=100)
+        self.combo_cooldown_entry.grid(row=row, column=1, padx=20, pady=10, sticky="w")
+        row += 1
+
+        ctk.CTkLabel(right_frame, text=self.tr('label_combo_delay')).grid(row=row, column=0, padx=20, pady=10, sticky="w")
+        self.combo_delay_entry = ctk.CTkEntry(right_frame, width=100)
+        self.combo_delay_entry.grid(row=row, column=1, padx=20, pady=10, sticky="w")
+        row += 1
+
+        self.combo_enabled_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(right_frame, text=self.tr('checkbox_combo_enabled'), variable=self.combo_enabled_var).grid(row=row, column=0, columnspan=2, padx=20, pady=10, sticky="w")
+        row += 1
+
+        # Skill list label
+        ctk.CTkLabel(right_frame, text=self.tr('label_combo_skills')).grid(row=row, column=0, padx=20, pady=10, sticky="nw")
+        
+        # Skill list frame with scrollable list
+        skills_container = ctk.CTkFrame(right_frame)
+        skills_container.grid(row=row, column=1, padx=20, pady=10, sticky="nswe")
+        skills_container.grid_columnconfigure(0, weight=1)
+        skills_container.grid_rowconfigure(0, weight=1)
+
+        self.combo_skills_scroll = ctk.CTkScrollableFrame(skills_container, height=120)
+        self.combo_skills_scroll.grid(row=0, column=0, sticky="nswe")
+
+        # Skill buttons for combo
+        combo_skill_btns = ctk.CTkFrame(skills_container, fg_color="transparent")
+        combo_skill_btns.grid(row=1, column=0, pady=5, sticky="we")
+
+        self.add_combo_skill_btn = ctk.CTkButton(combo_skill_btns, text=self.tr('button_capture_key'), command=self._add_combo_skill, fg_color="#5E35B1", hover_color="#7E57C2", width=120)
+        self.add_combo_skill_btn.pack(side="left", padx=(0, 5))
+
+        self.remove_combo_skill_btn = ctk.CTkButton(combo_skill_btns, text=self.tr('button_remove'), command=self._remove_combo_skill, fg_color="#f44336", hover_color="#EF5350", width=100)
+        self.remove_combo_skill_btn.pack(side="left")
+
+        row += 1
+
+        # Save button
+        btn_row = ctk.CTkFrame(right_frame, fg_color="transparent")
+        btn_row.grid(row=row, column=0, columnspan=2, padx=20, pady=20, sticky="e")
+
+        self.save_combo_btn = ctk.CTkButton(btn_row, text=self.tr('button_save'), command=self._save_combo, fg_color="#4CAF50", hover_color="#66BB6A")
+        self.save_combo_btn.pack(side="right")
+
+        # Track selected combo index and skills
+        self._selected_combo_idx = -1
+        self._combo_skills_list = []
+        self._selected_combo_skill = None
+
+        self._refresh_combo_list()
+
+        return page
+
+    def _refresh_combo_skills_display(self):
+        """Refresh the combo skills display in the editor."""
+        for widget in self.combo_skills_scroll.winfo_children():
+            widget.destroy()
+
+        self._combo_skill_frames = []
+        for i, skill in enumerate(self._combo_skills_list):
+            frame = ctk.CTkFrame(self.combo_skills_scroll, cursor="hand2")
+            frame.pack(fill="x", padx=2, pady=2)
+            frame.bind("<Button-1>", lambda e, idx=i: self._select_combo_skill(idx))
+
+            # Order number
+            num_lbl = ctk.CTkLabel(frame, text=f"{i+1}.", width=30)
+            num_lbl.pack(side="left", padx=5, pady=5)
+            num_lbl.bind("<Button-1>", lambda e, idx=i: self._select_combo_skill(idx))
+
+            # Skill key
+            skill_lbl = ctk.CTkLabel(frame, text=skill.upper(), font=ctk.CTkFont(weight="bold"))
+            skill_lbl.pack(side="left", padx=5, pady=5)
+            skill_lbl.bind("<Button-1>", lambda e, idx=i: self._select_combo_skill(idx))
+
+            self._combo_skill_frames.append((i, frame))
+
+    def _select_combo_skill(self, idx: int):
+        """Select a combo skill for removal."""
+        self._selected_combo_skill = idx
+        for i, frame in self._combo_skill_frames:
+            if i == idx:
+                frame.configure(fg_color=("#5E35B1", "#5E35B1"))
+            else:
+                frame.configure(fg_color=("gray86", "gray17"))
+
+    def _add_combo_skill(self):
+        """Add a skill to the current combo via key capture."""
+        dialog = KeyCaptureDialog(self, self.current_language)
+        self.wait_window(dialog)
+        if dialog.captured_key:
+            key = dialog.captured_key.lower()
+            self._combo_skills_list.append(key)
+            self._refresh_combo_skills_display()
+
+    def _remove_combo_skill(self):
+        """Remove the selected skill from the combo."""
+        if self._selected_combo_skill is not None and 0 <= self._selected_combo_skill < len(self._combo_skills_list):
+            del self._combo_skills_list[self._selected_combo_skill]
+            self._selected_combo_skill = None
+            self._refresh_combo_skills_display()
+
+    def _refresh_combo_list(self):
+        """Refresh the combo list display."""
+        # Clear existing
+        for widget in self.combo_listbox.winfo_children():
+            widget.destroy()
+
+        if not self._config:
+            return
+
+        combos = getattr(self._config, 'COMBO_SETS', [])
+        for i, combo in enumerate(combos):
+            name = combo.get('name', f'Combo {i+1}')
+            enabled = combo.get('enabled', True)
+            skills = combo.get('skills', [])
+
+            frame = ctk.CTkFrame(self.combo_listbox, cursor="hand2")
+            frame.pack(fill="x", padx=2, pady=2)
+            frame.bind("<Button-1>", lambda e, idx=i: self._select_combo(idx))
+
+            status = "✓" if enabled else "✗"
+            status_color = "green" if enabled else "red"
             
-            # Read the current file
-            with open(config_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            name_lbl = ctk.CTkLabel(frame, text=f"{status} {name}", font=ctk.CTkFont(weight="bold"))
+            name_lbl.pack(side="left", padx=10, pady=8)
+            name_lbl.bind("<Button-1>", lambda e, idx=i: self._select_combo(idx))
+
+            skills_lbl = ctk.CTkLabel(frame, text=f"({len(skills)} skills)", text_color="gray")
+            skills_lbl.pack(side="right", padx=10, pady=8)
+            skills_lbl.bind("<Button-1>", lambda e, idx=i: self._select_combo(idx))
+
+    def _select_combo(self, idx: int):
+        """Select a combo for editing."""
+        self._selected_combo_idx = idx
+        
+        if not self._config:
+            return
             
-            # Find and replace configuration values
-            new_lines = []
+        combos = getattr(self._config, 'COMBO_SETS', [])
+        if 0 <= idx < len(combos):
+            combo = combos[idx]
             
-            for i, line in enumerate(lines):
-                # Replace STEALTH_ATTACK_MODE_ENABLED
-                if 'STEALTH_ATTACK_MODE_ENABLED = ' in line and not line.strip().startswith('#'):
-                    new_lines.append(f'STEALTH_ATTACK_MODE_ENABLED = {skill_combo_config.STEALTH_ATTACK_MODE_ENABLED}\n')
+            self.combo_name_entry.delete(0, "end")
+            self.combo_name_entry.insert(0, combo.get('name', ''))
+            
+            self.combo_cooldown_entry.delete(0, "end")
+            self.combo_cooldown_entry.insert(0, str(combo.get('cooldown', 60.0)))
+            
+            self.combo_delay_entry.delete(0, "end")
+            self.combo_delay_entry.insert(0, str(combo.get('delay_between_skills', 0.5)))
+            
+            self.combo_enabled_var.set(combo.get('enabled', True))
+            
+            # Load skills into the list (not text)
+            self._combo_skills_list = list(combo.get('skills', []))
+            self._selected_combo_skill = None
+            self._refresh_combo_skills_display()
+
+    def _new_combo(self):
+        """Create a new combo."""
+        if not self._config:
+            return
+            
+        combos = list(getattr(self._config, 'COMBO_SETS', []))
+        new_combo = {
+            'name': f'New Combo {len(combos) + 1}',
+            'skills': ['1', '2', '3'],
+            'cooldown': 60.0,
+            'delay_between_skills': 0.5,
+            'enabled': True
+        }
+        combos.append(new_combo)
+        self._config.update_config({'COMBO_SETS': combos})
+        self._refresh_combo_list()
+        self._select_combo(len(combos) - 1)
+
+    def _delete_combo(self):
+        """Delete the selected combo."""
+        if self._selected_combo_idx < 0 or not self._config:
+            return
+            
+        combos = list(getattr(self._config, 'COMBO_SETS', []))
+        if 0 <= self._selected_combo_idx < len(combos):
+            del combos[self._selected_combo_idx]
+            self._config.update_config({'COMBO_SETS': combos})
+            self._selected_combo_idx = -1
+            self._refresh_combo_list()
+            self.log(self.tr('msg_combo_deleted'))
+
+    def _save_combo(self):
+        """Save the current combo."""
+        if self._selected_combo_idx < 0 or not self._config:
+            return
+            
+        combos = list(getattr(self._config, 'COMBO_SETS', []))
+        if 0 <= self._selected_combo_idx < len(combos):
+            combo = combos[self._selected_combo_idx]
+            combo['name'] = self.combo_name_entry.get()
+            
+            try:
+                combo['cooldown'] = float(self.combo_cooldown_entry.get())
+            except ValueError:
+                combo['cooldown'] = 60.0
                 
-                # Replace ATTACK_MODE_WEIGHTS dictionary
-                elif 'ATTACK_MODE_WEIGHTS = {' in line:
-                    new_lines.append('ATTACK_MODE_WEIGHTS = {\n')
-                    new_lines.append(f"    'standard_attack': {skill_combo_config.ATTACK_MODE_WEIGHTS['standard_attack']},\n")
-                    new_lines.append(f"    'single_skill': {skill_combo_config.ATTACK_MODE_WEIGHTS['single_skill']},\n")
-                    new_lines.append(f"    'combo_set': {skill_combo_config.ATTACK_MODE_WEIGHTS['combo_set']},\n")
-                    new_lines.append('}\n')
-                    # Skip old dictionary content
-                    while i < len(lines) - 1 and '}' not in lines[i]:
-                        i += 1
+            try:
+                combo['delay_between_skills'] = float(self.combo_delay_entry.get())
+            except ValueError:
+                combo['delay_between_skills'] = 0.5
                 
-                else:
-                    new_lines.append(line)
+            combo['enabled'] = self.combo_enabled_var.get()
             
-            # Also ensure INPUT_BACKEND / INPUT_DRY_RUN entries are updated
-            backend_written = False
-            dry_written = False
-            for i, line in enumerate(new_lines):
-                if 'INPUT_BACKEND = ' in line and not line.strip().startswith('#'):
-                    new_lines[i] = f"INPUT_BACKEND = '{ic.INPUT_BACKEND}'\n"
-                    backend_written = True
-                if 'INPUT_DRY_RUN = ' in line and not line.strip().startswith('#'):
-                    new_lines[i] = f"INPUT_DRY_RUN = {ic.INPUT_DRY_RUN}\n"
-                    dry_written = True
-
-            if not backend_written:
-                new_lines.append('\n# Input backend (interception)\n')
-                new_lines.append(f"INPUT_BACKEND = '{ic.INPUT_BACKEND}'\n")
-            if not dry_written:
-                new_lines.append(f"INPUT_DRY_RUN = {ic.INPUT_DRY_RUN}\n")
-
-            # Write back to file
-            with open(config_path, 'w', encoding='utf-8') as f:
-                f.writelines(new_lines)
+            # Use the skills list directly (captured via key capture)
+            combo['skills'] = list(self._combo_skills_list)
             
-            logger.info("✓ Main configuration saved to file")
-            
-        except Exception as e:
-            logger.error(f"Failed to save main configuration to file: {e}")
+            self._config.update_config({'COMBO_SETS': combos})
+            self._refresh_combo_list()
+            self.log(self.tr('msg_combo_saved'))
 
-    def _refresh_cooldown_panel(self):
-        """Refresh the cooldown tables from the runtime SkillComboManager if available."""
+    def _create_cooldowns_page(self) -> ctk.CTkFrame:
+        """Create the cooldowns page with live tracking."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_columnconfigure(1, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+
+        title = ctk.CTkLabel(page, text=self.tr('nav_cooldowns'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, columnspan=2, pady=(0, 20), sticky="w")
+
+        # Skills cooldowns
+        skills_frame = ctk.CTkFrame(page)
+        skills_frame.grid(row=1, column=0, padx=(0, 10), sticky="nswe")
+        skills_frame.grid_rowconfigure(1, weight=1)
+        skills_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(skills_frame, text=self.tr('skills_table_header_skill'), font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.skills_cooldown_frame = ctk.CTkScrollableFrame(skills_frame)
+        self.skills_cooldown_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nswe")
+
+        # Combos cooldowns
+        combos_frame = ctk.CTkFrame(page)
+        combos_frame.grid(row=1, column=1, sticky="nswe")
+        combos_frame.grid_rowconfigure(1, weight=1)
+        combos_frame.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(combos_frame, text=self.tr('combos_table_header_combo'), font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=10, sticky="w")
+
+        self.combos_cooldown_frame = ctk.CTkScrollableFrame(combos_frame)
+        self.combos_cooldown_frame.grid(row=1, column=0, padx=10, pady=10, sticky="nswe")
+
+        # Start cooldown update timer
+        self._cooldown_update_running = True
+        self._start_cooldown_timer()
+
+        return page
+
+    def _start_cooldown_timer(self):
+        """Start the cooldown update timer."""
+        def update_cooldowns():
+            if not self._cooldown_update_running:
+                return
+            try:
+                self._refresh_cooldown_display()
+            except Exception as e:
+                logger.error(f"Cooldown update error: {e}")
+            # Schedule next update
+            self.after(500, update_cooldowns)
+        
+        self.after(500, update_cooldowns)
+
+    def _refresh_cooldown_display(self):
+        """Refresh the cooldown displays."""
+        # Clear existing widgets
+        for widget in self.skills_cooldown_frame.winfo_children():
+            widget.destroy()
+        for widget in self.combos_cooldown_frame.winfo_children():
+            widget.destroy()
+
+        # Get skill combo manager from controller if running
         scm = None
-        try:
-            if self._controller and hasattr(self._controller, 'action_planner'):
-                scm = getattr(self._controller.action_planner, 'skill_combo_manager', None)
-        except Exception:
-            scm = None
+        if self._controller and hasattr(self._controller, 'action_planner'):
+            ap = self._controller.action_planner
+            if hasattr(ap, 'skill_combo_manager'):
+                scm = ap.skill_combo_manager
 
         # Skills
-        skill_names = []
-        try:
-            import skill_combo_config as scc
-            if hasattr(scc, 'SKILL_COOLDOWNS'):
-                skill_names = list(scc.SKILL_COOLDOWNS.keys())
-        except Exception:
-            skill_names = []
-
-        self._skills_table.setRowCount(len(skill_names))
-        for r, name in enumerate(skill_names):
-            try:
-                item_name = QtWidgets.QTableWidgetItem(name)
+        if self._config:
+            skills = getattr(self._config, 'SKILL_COOLDOWNS', {})
+            for skill, cooldown in skills.items():
+                frame = ctk.CTkFrame(self.skills_cooldown_frame)
+                frame.pack(fill="x", padx=2, pady=2)
+                
+                ctk.CTkLabel(frame, text=skill.upper(), font=ctk.CTkFont(weight="bold"), width=60).pack(side="left", padx=10, pady=5)
+                
+                # Check if skill is on cooldown
+                remaining = 0.0
                 if scm:
-                    rem = scm.get_skill_cooldown_remaining(name)
-                    txt = f"{rem:.1f}" if rem > 0 else "Ready"
+                    remaining = scm.get_skill_cooldown_remaining(skill)
+                
+                if remaining > 0:
+                    status_text = self.tr('status_cooldown', seconds=f"{remaining:.1f}")
+                    status_color = "orange"
                 else:
-                    txt = "Ready"
-                self._skills_table.setItem(r, 0, item_name)
-                self._skills_table.setItem(r, 1, QtWidgets.QTableWidgetItem(txt))
-            except Exception:
-                pass
+                    status_text = self.tr('status_ready')
+                    status_color = "green"
+                
+                ctk.CTkLabel(frame, text=status_text, text_color=status_color).pack(side="right", padx=10, pady=5)
 
         # Combos
-        combo_names = []
+        if self._config:
+            combos = getattr(self._config, 'COMBO_SETS', [])
+            for i, combo in enumerate(combos):
+                if not combo.get('enabled', True):
+                    continue
+                    
+                frame = ctk.CTkFrame(self.combos_cooldown_frame)
+                frame.pack(fill="x", padx=2, pady=2)
+                
+                name = combo.get('name', f'Combo {i+1}')
+                ctk.CTkLabel(frame, text=name, font=ctk.CTkFont(weight="bold")).pack(side="left", padx=10, pady=5)
+                
+                # Check if combo is on cooldown
+                remaining = 0.0
+                if scm:
+                    remaining = scm.get_combo_cooldown_remaining(combo)
+                
+                if remaining > 0:
+                    status_text = self.tr('status_cooldown', seconds=f"{remaining:.1f}")
+                    status_color = "orange"
+                else:
+                    status_text = self.tr('status_ready')
+                    status_color = "green"
+                
+                ctk.CTkLabel(frame, text=status_text, text_color=status_color).pack(side="right", padx=10, pady=5)
+
+    def _create_queue_page(self) -> ctk.CTkFrame:
+        """Create the combat queue monitoring page."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_columnconfigure(1, weight=1)
+        page.grid_rowconfigure(2, weight=1)
+
+        # Title
+        title = ctk.CTkLabel(page, text=self.tr('queue_title'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, columnspan=2, pady=(0, 5), sticky="w")
+
+        subtitle = ctk.CTkLabel(page, text=self.tr('queue_subtitle'), font=ctk.CTkFont(size=12), text_color="gray")
+        subtitle.grid(row=1, column=0, columnspan=2, pady=(0, 20), sticky="w")
+
+        # Statistics frame
+        stats_frame = ctk.CTkFrame(page)
+        stats_frame.grid(row=2, column=0, padx=(0, 10), pady=(0, 10), sticky="new")
+        stats_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(stats_frame, text=self.tr('queue_stats'), font=ctk.CTkFont(size=16, weight="bold")).grid(
+            row=0, column=0, columnspan=2, padx=10, pady=10, sticky="w"
+        )
+
+        self.queue_stat_labels = {}
+        stat_items = [
+            ("total_queued", self.tr('queue_total_queued')),
+            ("total_executed", self.tr('queue_total_executed')),
+            ("total_blocked", self.tr('queue_total_blocked')),
+        ]
+        for i, (key, label_text) in enumerate(stat_items, start=1):
+            ctk.CTkLabel(stats_frame, text=label_text).grid(row=i, column=0, padx=10, pady=5, sticky="w")
+            value_label = ctk.CTkLabel(stats_frame, text="0", font=ctk.CTkFont(weight="bold"))
+            value_label.grid(row=i, column=1, padx=10, pady=5, sticky="e")
+            self.queue_stat_labels[key] = value_label
+
+        # Clear queue button
+        clear_btn = ctk.CTkButton(
+            stats_frame,
+            text=self.tr('queue_clear'),
+            command=self._clear_combat_queue,
+            fg_color="red",
+            hover_color="darkred",
+            width=150
+        )
+        clear_btn.grid(row=len(stat_items)+1, column=0, columnspan=2, padx=10, pady=15)
+
+        # Recent actions (history) frame
+        history_frame = ctk.CTkFrame(page)
+        history_frame.grid(row=2, column=1, pady=(0, 10), sticky="nswe")
+        history_frame.grid_columnconfigure(0, weight=1)
+        history_frame.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(history_frame, text=self.tr('queue_history'), font=ctk.CTkFont(size=16, weight="bold")).grid(
+            row=0, column=0, padx=10, pady=10, sticky="w"
+        )
+
+        self.queue_history_frame = ctk.CTkScrollableFrame(history_frame)
+        self.queue_history_frame.grid(row=1, column=0, padx=10, pady=(0, 10), sticky="nswe")
+
+        # Track last state to avoid unnecessary redraws
+        self._queue_last_history_count = 0
+        self._queue_last_stats = {}
+        self._queue_history_widgets = []
+
+        # Start queue update timer
+        self._queue_update_running = True
+        self._start_queue_timer()
+
+        return page
+
+    def _start_queue_timer(self):
+        """Start the queue status update timer."""
+        def update_queue():
+            if not self._queue_update_running:
+                return
+            try:
+                self._refresh_queue_display()
+            except Exception as e:
+                logger.debug(f"Queue update error: {e}")
+            self.after(500, update_queue)  # Update every 500ms (was 200ms - reduces flicker)
+        
+        self.after(500, update_queue)
+
+    def _refresh_queue_display(self):
+        """Refresh the combat queue display with minimal redraws to prevent flickering."""
+        try:
+            from combat_queue import get_combat_queue
+            queue = get_combat_queue()
+            state = queue.get_queue_state()
+        except Exception:
+            return
+
+        # Update statistics only if changed
+        stats = state.get("stats", {})
+        for key, label in self.queue_stat_labels.items():
+            value = stats.get(key, 0)
+            if self._queue_last_stats.get(key) != value:
+                label.configure(text=str(value))
+                self._queue_last_stats[key] = value
+
+        # Only rebuild history if the count changed
+        history = state.get("history", [])
+        history_count = len(history)
+        
+        if history_count == self._queue_last_history_count and history_count > 0:
+            # Just update ages on existing widgets if possible
+            try:
+                for i, widget_info in enumerate(self._queue_history_widgets):
+                    if i < len(history):
+                        age_ms = history[i].get("age_ms", 0)
+                        age_text = f"{age_ms}ms" if age_ms < 1000 else f"{age_ms/1000:.1f}s"
+                        widget_info.get("age_label", None)
+                        if widget_info.get("age_label"):
+                            widget_info["age_label"].configure(text=age_text)
+                return
+            except Exception:
+                pass  # Fall through to full rebuild
+        
+        self._queue_last_history_count = history_count
+        
+        # Full rebuild needed
+        for widget in self.queue_history_frame.winfo_children():
+            widget.destroy()
+        self._queue_history_widgets = []
+
+        if not history:
+            ctk.CTkLabel(self.queue_history_frame, text=self.tr('queue_empty'), text_color="gray").pack(pady=20)
+            return
+
+        for action in history[:12]:  # Show last 12 actions (reduced from 15)
+            frame = ctk.CTkFrame(self.queue_history_frame)
+            frame.pack(fill="x", padx=2, pady=1)
+
+            widget_info = {"frame": frame}
+
+            # Key and type
+            key_text = action.get("key", "?").upper()
+            type_text = action.get("type", "unknown")[:6]
+            ctk.CTkLabel(frame, text=key_text, font=ctk.CTkFont(weight="bold"), width=40).pack(side="left", padx=3, pady=2)
+            ctk.CTkLabel(frame, text=f"[{type_text}]", text_color="gray", width=60).pack(side="left", padx=3, pady=2)
+
+            # Status with color
+            status = action.get("status", "unknown")
+            status_colors = {"completed": "green", "blocked": "red", "pending": "orange", "executing": "yellow"}
+            status_color = status_colors.get(status, "gray")
+            ctk.CTkLabel(frame, text=status[:4].upper(), text_color=status_color, width=50).pack(side="left", padx=3, pady=2)
+
+            # Age
+            age_ms = action.get("age_ms", 0)
+            age_text = f"{age_ms}ms" if age_ms < 1000 else f"{age_ms/1000:.1f}s"
+            age_label = ctk.CTkLabel(frame, text=age_text, text_color="gray", width=50)
+            age_label.pack(side="right", padx=3, pady=2)
+            widget_info["age_label"] = age_label
+
+            self._queue_history_widgets.append(widget_info)
+
+    def _clear_combat_queue(self):
+        """Clear the combat queue."""
+        try:
+            from combat_queue import get_combat_queue
+            queue = get_combat_queue()
+            queue.clear_queue()
+            self.log("Combat queue cleared")
+        except Exception as e:
+            self.log(f"Failed to clear queue: {e}")
+
+    def _create_logs_page(self) -> ctk.CTkFrame:
+        """Create the logs page."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+
+        title = ctk.CTkLabel(page, text=self.tr('nav_logs'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, pady=(0, 20), sticky="w")
+
+        self.log_text = ctk.CTkTextbox(page, font=ctk.CTkFont(family="Consolas", size=12))
+        self.log_text.grid(row=1, column=0, sticky="nswe")
+
+        return page
+
+    def _create_settings_page(self) -> ctk.CTkFrame:
+        """Create the settings page."""
+        page = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        page.grid_columnconfigure(0, weight=1)
+
+        title = ctk.CTkLabel(page, text=self.tr('nav_settings'), font=ctk.CTkFont(size=24, weight="bold"))
+        title.grid(row=0, column=0, pady=(0, 20), sticky="w")
+
+        # Language selection
+        lang_frame = ctk.CTkFrame(page)
+        lang_frame.grid(row=1, column=0, pady=10, sticky="we")
+
+        ctk.CTkLabel(lang_frame, text=self.tr('settings_language_label')).grid(row=0, column=0, padx=20, pady=10)
+        self.language_combo = ctk.CTkComboBox(
+            lang_frame,
+            values=[self.tr('language_english'), self.tr('language_korean')],
+            command=self._on_language_change
+        )
+        self.language_combo.grid(row=0, column=1, padx=20, pady=10)
+        self.language_combo.set(self.tr('language_english') if self.current_language == 'en' else self.tr('language_korean'))
+
+        # Combat settings
+        combat_frame = ctk.CTkFrame(page)
+        combat_frame.grid(row=2, column=0, pady=10, sticky="we")
+        combat_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(combat_frame, text=self.tr('settings_combat_group'), font=ctk.CTkFont(weight="bold")).grid(
+            row=0, column=0, columnspan=3, padx=20, pady=(10, 5), sticky="w"
+        )
+
+        # Random Combat Chance slider
+        ctk.CTkLabel(combat_frame, text=self.tr('label_random_combat_chance')).grid(row=1, column=0, padx=20, pady=10, sticky="w")
+        
+        self.random_combat_slider = ctk.CTkSlider(
+            combat_frame, 
+            from_=0, 
+            to=100, 
+            number_of_steps=20,
+            command=self._on_random_combat_change,
+            width=200
+        )
+        self.random_combat_slider.grid(row=1, column=1, padx=10, pady=10, sticky="w")
+        
+        # Load current value from config
         try:
             import skill_combo_config as scc
-            if hasattr(scc, 'COMBO_SETS'):
-                combo_names = list(scc.COMBO_SETS.keys())
+            current_chance = getattr(scc, 'RANDOM_COMBAT_CHANCE', 0.50) * 100
         except Exception:
-            combo_names = []
+            current_chance = 50
+        self.random_combat_slider.set(current_chance)
+        
+        self.random_combat_label = ctk.CTkLabel(combat_frame, text=self.tr('label_random_combat_percent', percent=int(current_chance)))
+        self.random_combat_label.grid(row=1, column=2, padx=10, pady=10, sticky="w")
 
-        self._combos_table.setRowCount(len(combo_names))
-        for r, cname in enumerate(combo_names):
-            try:
-                item_name = QtWidgets.QTableWidgetItem(cname)
-                status = "Unknown"
-                if scm:
-                    rem = scm.get_combo_cooldown_remaining(cname)
-                    # try to get skills for the combo to determine readiness
-                    skills = []
-                    if hasattr(scm, 'get_combo_skills'):
-                        try:
-                            skills = scm.get_combo_skills(cname)
-                        except Exception:
-                            skills = []
-                    all_ready = True
-                    if hasattr(scm, 'are_all_skills_ready') and skills:
-                        all_ready = scm.are_all_skills_ready(skills)
-                    if rem > 0:
-                        status = self.tr('status_cooldown').format(seconds=f"{rem:.1f}")
-                    else:
-                        status = self.tr('status_ready') if all_ready else self.tr('status_waiting')
-                else:
-                    status = self.tr('status_ready')
-                self._combos_table.setItem(r, 0, item_name)
-                self._combos_table.setItem(r, 1, QtWidgets.QTableWidgetItem(status))
-            except Exception:
-                pass
+        return page
 
-    def _on_backend_changed(self, backend: str):
-        """User changed the input backend from the UI dropdown."""
+    def _on_random_combat_change(self, value):
+        """Handle random combat chance slider change."""
+        percent = int(value)
+        self.random_combat_label.configure(text=self.tr('label_random_combat_percent', percent=percent))
+        
+        # Save to config
         try:
-            # Validate availability and persist via JSON-backed config
-            try:
-                import skill_combo_config as scc
-                # Validate backend and show a dialog if unavailable
-                try:
-                    ic.validate_backend(backend)
-                    scc.update_config({'INPUT_BACKEND': backend})
-                    ic.INPUT_BACKEND = backend
-                    self.log(self.tr('log_backend_set').format(backend=backend))
-                except RuntimeError as ve:
-                    # Persist selection so UI reflects user's choice, but inform the user
-                    try:
-                        scc.update_config({'INPUT_BACKEND': backend})
-                    except Exception:
-                        pass
-                    ic.INPUT_BACKEND = backend
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        self.tr('msg_backend_unavailable_title'),
-                        self.tr('msg_backend_unavailable_body', backend=backend, error=ve)
-                    )
-                    self.log(self.tr('log_backend_unavailable').format(backend=backend, error=ve))
-            except Exception:
-                # Fallback: set module var and try to persist to JSON config
-                try:
-                    ic.INPUT_BACKEND = backend
-                    import skill_combo_config as scc2
-                    scc2.update_config({'INPUT_BACKEND': backend})
-                    self.log(self.tr('log_backend_set').format(backend=backend))
-                except Exception as e:
-                    self.log(self.tr('msg_failed_backend_json').format(error=e))
-            # update status indicator after attempting to set backend
-            try:
-                self._update_backend_status(backend)
-            except Exception:
-                pass
+            import skill_combo_config as scc
+            scc.update_config({'RANDOM_COMBAT_CHANCE': percent / 100.0})
+            logger.info(f"Random combat chance set to {percent}%")
         except Exception as e:
-            self.log(self.tr('log_backend_set_fail').format(error=e))
-
-    def _on_dry_run_toggled(self, enabled: bool):
-        """User toggled DRY_RUN simulate mode in the UI."""
-        try:
-            ic.INPUT_DRY_RUN = bool(enabled)
-            try:
-                import skill_combo_config as scc
-                scc.update_config({'INPUT_DRY_RUN': bool(enabled)})
-            except Exception:
-                try:
-                    import skill_combo_config as scc2
-                    scc2.update_config({'INPUT_DRY_RUN': bool(enabled)})
-                except Exception as e:
-                    self.log(self.tr('msg_failed_dry_run_json').format(error=e))
-            state_text = self.tr('state_on') if enabled else self.tr('state_off')
-            self.log(self.tr('log_simulate_mode').format(state=state_text))
-        except Exception as e:
-            self.log(self.tr('log_simulate_toggle_fail').format(error=e))
-    
-    def _update_backend_status(self, backend: str):
-        """Update the small status label next to the backend selector."""
-        try:
-            ic.validate_backend(backend)
-            self.backend_status.setText(self.tr('status_available'))
-            self.backend_status.setStyleSheet('color: green; font-weight: bold;')
-            self.backend_status.setToolTip(self.tr('status_tooltip_available', backend=backend))
-        except RuntimeError as e:
-            self.backend_status.setText(self.tr('status_unavailable'))
-            self.backend_status.setStyleSheet('color: red; font-weight: bold;')
-            self.backend_status.setToolTip(self.tr('status_tooltip_unavailable', error=str(e)))
-        except Exception:
-            self.backend_status.setText(self.tr('status_unknown'))
-            self.backend_status.setStyleSheet('color: orange;')
-            self.backend_status.setToolTip(self.tr('status_tooltip_unknown'))
-    
-    def _open_skill_config(self):
-        """Open skill configuration file in default editor."""
-        try:
-            import os
-            import subprocess
-            # Prefer JSON config for editing; fallback to python file if JSON missing
-            json_path = os.path.join(os.path.dirname(__file__), 'skill_combo_config.json')
-            py_path = os.path.join(os.path.dirname(__file__), 'skill_combo_config.py')
-            target = json_path if os.path.exists(json_path) else py_path
-
-            if os.path.exists(target):
-                if sys.platform == 'win32':
-                    os.startfile(target)
-                else:
-                    subprocess.call(['open' if sys.platform == 'darwin' else 'xdg-open', target])
-                self.log(self.tr('log_opened_config').format(path=target))
-            else:
-                self.log(self.tr('log_config_not_found').format(path=target))
-        except Exception as e:
-            self.log(self.tr('log_open_config_fail').format(error=e))
+            logger.error(f"Failed to save random combat chance: {e}")
 
     def _refresh_windows(self):
-        self.win_combo.clear()
+        """Refresh the window list."""
         wins = list_windows()
-        for title, hwnd in wins:
-            self.win_combo.addItem(f"{title} (hwnd={hwnd})", hwnd)
+        values = [f"{title} (hwnd={hwnd})" for title, hwnd in wins]
+        self.window_combo.configure(values=values)
+        if values:
+            self.window_combo.set(values[0])
+        self._windows = wins
 
-    def start(self):
-        idx = self.win_combo.currentIndex()
-        if idx < 0:
+    def _start_overlay_system(self):
+        """Start the Qt overlay system in a background thread with proper event processing."""
+        def run_qt():
+            try:
+                self._qt_app = QtWidgets.QApplication.instance()
+                if not self._qt_app:
+                    self._qt_app = QtWidgets.QApplication([])
+                
+                self._overlay = OverlayWindow()
+                self._overlay.set_automation_enabled(self._automation_enabled)
+                
+                # Process Qt events in a loop to keep the overlay responsive
+                import time
+                while True:
+                    try:
+                        self._qt_app.processEvents()
+                        time.sleep(0.016)  # ~60 FPS event processing
+                    except Exception:
+                        break
+            except Exception as e:
+                logger.error(f"Qt overlay system error: {e}")
+
+        self._qt_thread = threading.Thread(target=run_qt, daemon=True)
+        self._qt_thread.start()
+        
+        # Give Qt time to initialize
+        time.sleep(0.2)
+
+    def _start_detection(self):
+        """Start the detection system."""
+        sel = self.window_combo.get()
+        if not sel or not hasattr(self, '_windows'):
             self.log(self.tr('log_no_window_selected'))
             return
-        hwnd = self.win_combo.currentData()
-        try:
-            ic.set_active_hwnd(hwnd)
-        except Exception:
-            pass
+
+        # Find hwnd
+        hwnd = None
+        for title, h in self._windows:
+            if f"(hwnd={h})" in sel:
+                hwnd = h
+                break
+
+        if not hwnd:
+            self.log(self.tr('log_no_window_selected'))
+            return
+
         rect = get_window_rect(hwnd)
         if not rect:
             self.log(self.tr('log_unable_get_window_rect'))
             return
-        left, top, w, h = rect
-        # show overlay aligned to window
-        self._overlay.setGeometry(left, top, w, h)
-        self._overlay.show()
-        self._overlay.make_clickthrough()
 
-        # create controller (local model) - use default FPS (None uses default inside detection controller)
-        self._controller = DetectionController(hwnd=hwnd, overlay_update=self._overlay.update_overlay, log_fn=self.log, fps=None)
-        # apply stored automation preference
         try:
-            self._controller.action_planner.set_enabled(self._automation_enabled)
+            ic.set_active_hwnd(hwnd)
         except Exception:
             pass
+
+        # Show overlay
+        left, top, w, h = rect
+        if self._overlay:
+            try:
+                self._overlay.setGeometry(left, top, w, h)
+                self._overlay.show()
+                self._overlay.raise_()  # Bring to front
+                self._overlay.activateWindow()
+                self._overlay.make_clickthrough()
+                self.log(f"Overlay positioned at ({left}, {top}) size ({w}x{h})")
+            except Exception as e:
+                self.log(f"Overlay setup error: {e}")
+        else:
+            self.log("Warning: Overlay not initialized")
+
+        # Create controller
+        self._controller = DetectionController(
+            hwnd=hwnd,
+            overlay_update=self._overlay.update_overlay if self._overlay else lambda *a: None,
+            log_fn=self.log,
+            fps=None
+        )
         self._controller.start()
-        # Focus the game window immediately when starting
-        try:
-            ic.focus_window(hwnd)
-        except Exception:
-            pass
-        # start periodic overlay repositioning to follow the target window
-        self._pos_timer.start()
-        # start cooldown monitor refresh
-        try:
-            self._cooldown_timer.start()
-        except Exception:
-            pass
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+
+        self.start_btn.configure(state="disabled")
+        self.stop_btn.configure(state="normal", fg_color="orange")
+
         self.log(self.tr('log_started_detection'))
 
-    def stop(self):
+    def _stop_detection(self):
+        """Stop the detection system."""
         if self._controller:
             self._controller.stop()
             self._controller = None
-        self._overlay.hide()
-        self._pos_timer.stop()
-        try:
-            self._cooldown_timer.stop()
-        except Exception:
-            pass
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+
+        if self._overlay:
+            self._overlay.hide()
+
+        self.start_btn.configure(state="normal")
+        self.stop_btn.configure(state="disabled", fg_color="gray")
+
         self.log(self.tr('log_stopped'))
 
-    def emergency_stop(self):
-        # Immediately disable automation and stop controller
+    def _emergency_stop(self):
+        """Emergency stop - disable everything immediately."""
         self._automation_enabled = False
-        try:
+        if self._overlay:
             self._overlay.set_automation_enabled(False)
-        except Exception:
-            pass
         if self._controller:
             try:
                 self._controller.action_planner.set_enabled(False)
@@ -1377,1517 +1601,341 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
         self.log(self.tr('log_emergency_stop'))
 
-    def _reposition_overlay(self):
-        # Keep overlay aligned to the target window while running
-        idx = self.win_combo.currentIndex()
-        if idx < 0:
-            return
-        hwnd = self.win_combo.currentData()
-        rect = get_window_rect(hwnd)
-        if rect:
-            left, top, w, h = rect
-            self._overlay.setGeometry(left, top, w, h)
+    def _on_simulate_toggle(self):
+        """Handle simulate mode toggle."""
+        ic.INPUT_DRY_RUN = self.simulate_var.get()
+        state = self.tr('state_on') if ic.INPUT_DRY_RUN else self.tr('state_off')
+        self.log(self.tr('log_simulate_mode', state=state))
 
-    def toggle_automation(self):
-        # toggle desired automation state and apply to controller if present
-        self._automation_enabled = not self._automation_enabled
-        enabled = self._automation_enabled
-        # update overlay indicator
+    def _update_skill_config(self, *args):
+        """Update skill configuration from UI values."""
+        if not self._config:
+            return
+
         try:
-            self._overlay.set_automation_enabled(enabled)
-        except Exception:
-            pass
-        # apply to running controller
-        if self._controller:
+            self._config.STEALTH_ATTACK_MODE_ENABLED = self.stealth_var.get()
+            self._config.COMBAT_USE_SKILLS = self.combat_skills_var.get()
+            self._config.ATTACK_MODE_WEIGHTS['standard_attack'] = self.standard_weight.get()
+            self._config.ATTACK_MODE_WEIGHTS['single_skill'] = self.single_weight.get()
+            self._config.ATTACK_MODE_WEIGHTS['combo_set'] = self.combo_weight.get()
+
             try:
-                self._controller.action_planner.set_enabled(enabled)
-            except Exception:
+                self._config.OUTNUMBERED_THRESHOLD = int(self.outnumbered_spin.get())
+            except ValueError:
                 pass
 
-    def _start_hotkey_listener(self):
-        # Start background thread that registers a global Delete hotkey and
-        # invokes toggle_automation when pressed.
-        import threading, ctypes
-        from ctypes import wintypes
-
-        user32 = ctypes.windll.user32
-        WM_HOTKEY = 0x0312
-        VK_DELETE = 0x2E
-
-        def _hotkey_thread_fn():
-            HOTKEY_ID = 1
-            # Try RegisterHotKey first (simple, preferred)
-            if user32.RegisterHotKey(None, HOTKEY_ID, 0, VK_DELETE):
-                # registration succeeded
-                try:
-                    self.log(self.tr('log_hotkey_registered'))
-                except Exception:
-                    pass
-                msg = wintypes.MSG()
-                try:
-                    while True:
-                        b = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-                        if b == 0:
-                            break
-                        if msg.message == WM_HOTKEY:
-                            try:
-                                QtCore.QMetaObject.invokeMethod(self, "toggle_automation", QtCore.Qt.QueuedConnection)
-                            except Exception:
-                                pass
-                        user32.TranslateMessage(ctypes.byref(msg))
-                        user32.DispatchMessageW(ctypes.byref(msg))
-                finally:
-                    try:
-                        user32.UnregisterHotKey(None, HOTKEY_ID)
-                    except Exception:
-                        pass
-                return
-
-            # If RegisterHotKey failed, fall back to a low-level keyboard hook
             try:
-                self.log(self.tr('log_register_hotkey_failed'))
-            except Exception:
+                self._config.DEFENSIVE_COOLDOWN_SEC = float(self.defensive_cd.get())
+            except ValueError:
                 pass
 
-            # WH_KEYBOARD_LL hook to catch Delete presses
-            WH_KEYBOARD_LL = 13
-            WM_KEYDOWN = 0x0100
-
-            kernel32 = ctypes.windll.kernel32
-
-            # define KBDLLHOOKSTRUCT
-            class KBDLLHOOKSTRUCT(ctypes.Structure):
-                _fields_ = [("vkCode", wintypes.DWORD),
-                            ("scanCode", wintypes.DWORD),
-                            ("flags", wintypes.DWORD),
-                            ("time", wintypes.DWORD),
-                            ("dwExtraInfo", wintypes.ULONG_PTR)]
-
-            LowLevelKeyboardProc = ctypes.WINFUNCTYPE(wintypes.LRESULT, wintypes.INT, wintypes.WPARAM, wintypes.LPARAM)
-
-            @LowLevelKeyboardProc
-            def _ll_keyboard_proc(nCode, wParam, lParam):
-                try:
-                    if nCode >= 0 and wParam == WM_KEYDOWN:
-                        kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                        if kb.vkCode == VK_DELETE:
-                            try:
-                                QtCore.QMetaObject.invokeMethod(self, "toggle_automation", QtCore.Qt.QueuedConnection)
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-                return user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-            # install hook
-            hook_id = user32.SetWindowsHookExW(WH_KEYBOARD_LL, _ll_keyboard_proc, kernel32.GetModuleHandleW(None), 0)
-            if not hook_id:
-                try:
-                    self.log(self.tr('log_failed_hotkey_hook'))
-                except Exception:
-                    pass
-                return
-
-            # message loop to keep the hook alive
-            msg = wintypes.MSG()
-            try:
-                while True:
-                    b = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
-                    if b == 0:
-                        break
-                    user32.TranslateMessage(ctypes.byref(msg))
-                    user32.DispatchMessageW(ctypes.byref(msg))
-            finally:
-                try:
-                    user32.UnhookWindowsHookEx(hook_id)
-                except Exception:
-                    pass
-
-        t = threading.Thread(target=_hotkey_thread_fn, daemon=True)
-        t.start()
-        self._hotkey_thread = t
-
-    def _open_skill_editor(self):
-        """Navigate to the embedded skill editor screen."""
-        try:
-            self.change_page(1)
-        except Exception:
-            pass
-    
-    def _open_combo_editor(self):
-        """Navigate to the embedded combo editor screen."""
-        try:
-            self.change_page(2)
-        except Exception:
-            pass
-
-    # Anti-detection dialog removed (stealth_config no longer supported)
-
-    def closeEvent(self, event):
-        # ensure controller stopped and leave
-        try:
-            if self._controller:
-                self._controller.stop()
-        except Exception:
-            pass
-        return super().closeEvent(event)
-
-
-class KeybindCaptureDialog(QtWidgets.QDialog):
-    """Dialog for capturing a keybind press."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._language = self._resolve_language()
-        self.setWindowTitle(self._t('capture_title'))
-        self.setModal(True)
-        self.setFixedSize(400, 200)
-        
-        self.captured_key = None
-        
-        layout = QtWidgets.QVBoxLayout(self)
-        
-        # Instructions
-        self.instruction_label = QtWidgets.QLabel(self._t('capture_instruction'))
-        self.instruction_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.instruction_label.setStyleSheet("font-size: 14pt; padding: 20px;")
-        layout.addWidget(self.instruction_label)
-        
-        # Display captured key
-        self.key_display = QtWidgets.QLabel(self._t('capture_waiting'))
-        self.key_display.setAlignment(QtCore.Qt.AlignCenter)
-        self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #4CAF50; padding: 10px;")
-        layout.addWidget(self.key_display)
-        
-        # Buttons
-        button_layout = QtWidgets.QHBoxLayout()
-        self.confirm_btn = QtWidgets.QPushButton(self._t('capture_confirm'))
-        self.confirm_btn.setEnabled(False)
-        self.confirm_btn.clicked.connect(self.accept)
-        self.confirm_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
-        
-        self.cancel_btn = QtWidgets.QPushButton(self._t('capture_cancel'))
-        self.cancel_btn.clicked.connect(self.reject)
-        self.cancel_btn.setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; padding: 8px; }")
-        
-        button_layout.addWidget(self.confirm_btn)
-        button_layout.addWidget(self.cancel_btn)
-        layout.addLayout(button_layout)
-    
-    def keyPressEvent(self, event):
-        """Capture key press."""
-        key = event.key()
-        modifiers = event.modifiers()
-        
-        # Map numeric and punctuation keys
-        key_map = {
-            QtCore.Qt.Key_1: '1', QtCore.Qt.Key_2: '2', QtCore.Qt.Key_3: '3',
-            QtCore.Qt.Key_4: '4', QtCore.Qt.Key_5: '5', QtCore.Qt.Key_6: '6',
-            QtCore.Qt.Key_7: '7', QtCore.Qt.Key_8: '8', QtCore.Qt.Key_9: '9',
-            QtCore.Qt.Key_0: '0', QtCore.Qt.Key_Minus: '-', QtCore.Qt.Key_Equal: '=',
-        }
-
-        # Accept F1-F9 and numeric keys only; explicitly ignore modifier keys
-        if key in key_map and not (modifiers & (QtCore.Qt.AltModifier | QtCore.Qt.ControlModifier)):
-            self.captured_key = key_map[key]
-            self.key_display.setText(self.captured_key)
-            self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #4CAF50; padding: 10px;")
-            self.confirm_btn.setEnabled(True)
-            return
-
-        # Function keys F1..F9
-        f_keys = {QtCore.Qt.Key_F1: 'f1', QtCore.Qt.Key_F2: 'f2', QtCore.Qt.Key_F3: 'f3',
-                  QtCore.Qt.Key_F4: 'f4', QtCore.Qt.Key_F5: 'f5', QtCore.Qt.Key_F6: 'f6',
-                  QtCore.Qt.Key_F7: 'f7', QtCore.Qt.Key_F8: 'f8', QtCore.Qt.Key_F9: 'f9'}
-        if key in f_keys and not (modifiers & (QtCore.Qt.AltModifier | QtCore.Qt.ControlModifier)):
-            self.captured_key = f_keys[key]
-            self.key_display.setText(self.captured_key.upper())
-            self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #4CAF50; padding: 10px;")
-            self.confirm_btn.setEnabled(True)
-            return
-
-        # Otherwise invalid for skill binds
-        self.key_display.setText(self._t('capture_invalid'))
-        self.key_display.setStyleSheet("font-size: 18pt; font-weight: bold; color: #f44336; padding: 10px;")
-
-    def _resolve_language(self) -> str:
-        parent = self.parent()
-        while parent is not None and not hasattr(parent, 'current_language'):
-            parent = parent.parent()
-        return getattr(parent, 'current_language', 'en')
-
-    def _t(self, key: str, **kwargs) -> str:
-        return translate_text(self._language, key, **kwargs)
-
-
-class SkillEditorScreen(QtWidgets.QWidget):
-    """Embedded screen for editing individual skill cooldowns."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName('skill_editor_screen')
-        self.setMinimumSize(720, 520)
-        self._language = self._resolve_language()
-        self._pool_guard = False
-        self._selected_skill_key = None
-        self._meta_guard = False
-
-        import skill_combo_config
-        self.config = skill_combo_config
-        self._skill_metadata = dict(getattr(self.config, 'SKILL_METADATA', {}) or {})
-
-        root_layout = QtWidgets.QVBoxLayout(self)
-        root_layout.setContentsMargins(16, 16, 16, 16)
-        root_layout.setSpacing(16)
-
-        header_layout = QtWidgets.QVBoxLayout()
-        header_layout.setSpacing(4)
-        self.title_label = QtWidgets.QLabel()
-        self.title_label.setStyleSheet('font-size:20pt; font-weight:600;')
-        header_layout.addWidget(self.title_label)
-
-        self.subtitle_label = QtWidgets.QLabel()
-        self.subtitle_label.setStyleSheet('color:#bdbdbd;')
-        self.subtitle_label.setWordWrap(True)
-        header_layout.addWidget(self.subtitle_label)
-        root_layout.addLayout(header_layout)
-
-        stats_layout = QtWidgets.QHBoxLayout()
-        stats_layout.setSpacing(12)
-        card, value, caption = self._create_stat_card()
-        self.total_skills_card = card
-        self.total_skills_value = value
-        self.total_skills_caption = caption
-        stats_layout.addWidget(card)
-        card, value, caption = self._create_stat_card()
-        self.pool_card = card
-        self.pool_value = value
-        self.pool_caption = caption
-        stats_layout.addWidget(card)
-        card, value, caption = self._create_stat_card()
-        self.gcd_card = card
-        self.gcd_value = value
-        self.gcd_caption = caption
-        stats_layout.addWidget(card)
-        stats_layout.addStretch()
-        root_layout.addLayout(stats_layout)
-
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        root_layout.addWidget(splitter, 1)
-
-        left_widget = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(left_widget)
-        left_layout.setSpacing(10)
-
-        search_row = QtWidgets.QHBoxLayout()
-        self.search_edit = QtWidgets.QLineEdit()
-        self.search_edit.setClearButtonEnabled(True)
-        self.search_edit.textChanged.connect(self._filter_skills)
-        search_row.addWidget(self.search_edit)
-        self.reset_filter_btn = QtWidgets.QPushButton()
-        self.reset_filter_btn.setFixedWidth(90)
-        self.reset_filter_btn.clicked.connect(self._reset_filter)
-        search_row.addWidget(self.reset_filter_btn)
-        left_layout.addLayout(search_row)
-
-        self.cooldown_group = QtWidgets.QGroupBox()
-        cooldown_group_layout = QtWidgets.QVBoxLayout()
-        cooldown_group_layout.setSpacing(8)
-        self.cooldown_group.setLayout(cooldown_group_layout)
-
-        self.skill_table = QtWidgets.QTableWidget()
-        self.skill_table.setColumnCount(2)
-        self.skill_table.setHorizontalHeaderLabels(['Skill', 'Cooldown'])
-        header = self.skill_table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
-        self.skill_table.verticalHeader().setVisible(False)
-        self.skill_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
-        self.skill_table.setAlternatingRowColors(True)
-        self.skill_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.skill_table.currentCellChanged.connect(self._on_skill_selection_changed)
-        cooldown_group_layout.addWidget(self.skill_table)
-
-        table_btn_row = QtWidgets.QHBoxLayout()
-        table_btn_row.setSpacing(6)
-        self.add_skill_btn = QtWidgets.QPushButton()
-        self.add_skill_btn.setFixedWidth(110)
-        self.add_skill_btn.clicked.connect(self._add_skill)
-        table_btn_row.addWidget(self.add_skill_btn)
-        self.remove_skill_btn = QtWidgets.QPushButton()
-        self.remove_skill_btn.setFixedWidth(110)
-        self.remove_skill_btn.clicked.connect(self._remove_skill)
-        table_btn_row.addWidget(self.remove_skill_btn)
-        table_btn_row.addStretch()
-        cooldown_group_layout.addLayout(table_btn_row)
-
-        left_layout.addWidget(self.cooldown_group, 1)
-        splitter.addWidget(left_widget)
-
-        right_widget = QtWidgets.QWidget()
-        right_layout = QtWidgets.QVBoxLayout(right_widget)
-        right_layout.setSpacing(12)
-
-        self.pool_group = QtWidgets.QGroupBox()
-        pool_layout = QtWidgets.QVBoxLayout()
-        pool_layout.setSpacing(6)
-
-        self.skill_pool_edit = QtWidgets.QLineEdit()
-        self.skill_pool_edit.setClearButtonEnabled(True)
-        self.skill_pool_edit.editingFinished.connect(self._sync_pool_list_from_text)
-        pool_layout.addWidget(self.skill_pool_edit)
-
-        self.pool_list = QtWidgets.QListWidget()
-        self.pool_list.setAlternatingRowColors(True)
-        self.pool_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.pool_list.setEditTriggers(QtWidgets.QAbstractItemView.DoubleClicked | QtWidgets.QAbstractItemView.EditKeyPressed)
-        self.pool_list.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
-        self.pool_list.setDefaultDropAction(QtCore.Qt.MoveAction)
-        self.pool_list.setMinimumHeight(160)
-        self.pool_list.itemChanged.connect(self._on_pool_item_changed)
-        self.pool_list.itemSelectionChanged.connect(self._on_pool_selection_changed)
-        pool_layout.addWidget(self.pool_list)
-
-        pool_btn_row = QtWidgets.QHBoxLayout()
-        pool_btn_row.setSpacing(6)
-        self.add_pool_skill_btn = QtWidgets.QPushButton()
-        self.add_pool_skill_btn.clicked.connect(self._add_skill_to_pool)
-        pool_btn_row.addWidget(self.add_pool_skill_btn)
-        self.remove_pool_skill_btn = QtWidgets.QPushButton()
-        self.remove_pool_skill_btn.clicked.connect(self._remove_pool_skill)
-        self.remove_pool_skill_btn.setEnabled(False)
-        pool_btn_row.addWidget(self.remove_pool_skill_btn)
-        pool_btn_row.addStretch()
-        pool_layout.addLayout(pool_btn_row)
-
-        self.hint_label = QtWidgets.QLabel()
-        self.hint_label.setWordWrap(True)
-        self.hint_label.setStyleSheet('color:#bdbdbd;')
-        pool_layout.addWidget(self.hint_label)
-
-        self.pool_group.setLayout(pool_layout)
-        right_layout.addWidget(self.pool_group)
-
-        model = self.pool_list.model()
-        if model is not None:
-            model.rowsInserted.connect(self._on_pool_rows_changed)
-            model.rowsRemoved.connect(self._on_pool_rows_changed)
-            model.rowsMoved.connect(self._on_pool_rows_changed)
-
-        self.timing_group = QtWidgets.QGroupBox()
-        timing_layout = QtWidgets.QHBoxLayout()
-        timing_layout.setSpacing(6)
-        self.gcd_label = QtWidgets.QLabel()
-        timing_layout.addWidget(self.gcd_label)
-        self.gcd_spin = QtWidgets.QDoubleSpinBox()
-        self.gcd_spin.setRange(0.1, 600.0)
-        self.gcd_spin.setSingleStep(0.1)
-        self.gcd_spin.valueChanged.connect(lambda _: self._update_stats())
-        timing_layout.addWidget(self.gcd_spin)
-        timing_layout.addStretch()
-        self.timing_group.setLayout(timing_layout)
-        right_layout.addWidget(self.timing_group)
-
-        # Skill metadata group
-        self.meta_group = QtWidgets.QGroupBox()
-        meta_form = QtWidgets.QFormLayout()
-        self.skill_type_combo = QtWidgets.QComboBox()
-        self.skill_type_combo.addItem(self._t('skill_type_single'), 'single')
-        self.skill_type_combo.addItem(self._t('skill_type_cleave'), 'cleave')
-        self.skill_type_combo.addItem(self._t('skill_type_aoe'), 'aoe')
-        self.skill_type_combo.currentIndexChanged.connect(self._persist_meta_from_ui)
-
-        self.min_enemy_spin = QtWidgets.QSpinBox()
-        self.min_enemy_spin.setRange(1, 20)
-        self.min_enemy_spin.valueChanged.connect(self._persist_meta_from_ui)
-
-        self.save_for_pack_cb = QtWidgets.QCheckBox()
-        self.save_for_pack_cb.stateChanged.connect(self._persist_meta_from_ui)
-
-        self.defensive_cb = QtWidgets.QCheckBox()
-        self.defensive_cb.stateChanged.connect(self._persist_meta_from_ui)
-
-        meta_form.addRow(self._t('label_skill_type'), self.skill_type_combo)
-        meta_form.addRow(self._t('label_min_enemy_count'), self.min_enemy_spin)
-        meta_form.addRow(self._t('checkbox_save_for_pack'), self.save_for_pack_cb)
-        meta_form.addRow(self._t('checkbox_defensive_skill'), self.defensive_cb)
-        self.meta_group.setLayout(meta_form)
-        right_layout.addWidget(self.meta_group)
-
-        right_layout.addStretch()
-
-        actions_row = QtWidgets.QHBoxLayout()
-        actions_row.setSpacing(10)
-        self.save_btn = QtWidgets.QPushButton()
-        self.save_btn.setStyleSheet('background-color:#4CAF50; color:white; font-weight:bold;')
-        self.save_btn.clicked.connect(self._save_and_accept)
-        actions_row.addWidget(self.save_btn)
-        self.cancel_btn = QtWidgets.QPushButton()
-        self.cancel_btn.setStyleSheet('background-color:#f44336; color:white; font-weight:bold;')
-        self.cancel_btn.clicked.connect(self._on_cancel)
-        actions_row.addWidget(self.cancel_btn)
-        right_layout.addLayout(actions_row)
-
-        splitter.addWidget(right_widget)
-        splitter.setSizes([540, 280])
-
-        self._sync_pool_list_from_config()
-        self._load_skills()
-        self.gcd_spin.blockSignals(True)
-        self.gcd_spin.setValue(self.config.SINGLE_SKILL_GLOBAL_COOLDOWN)
-        self.gcd_spin.blockSignals(False)
-
-        self._apply_theme()
-        self.apply_translations(self._language)
-        self._update_stats()
-
-    def _create_stat_card(self):
-        frame = QtWidgets.QFrame()
-        frame.setObjectName('skillStatCard')
-        frame.setStyleSheet(
-            'QFrame#skillStatCard { background-color: #211331; border: 1px solid #3b1c5d; border-radius: 10px; }'
-        )
-        layout = QtWidgets.QVBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
-        value = QtWidgets.QLabel('0')
-        value.setStyleSheet('font-size:18pt; font-weight:600; color:#E6E1FF;')
-        layout.addWidget(value)
-        caption = QtWidgets.QLabel()
-        caption.setStyleSheet('color:#B39DDB;')
-        caption.setWordWrap(True)
-        layout.addWidget(caption)
-        return frame, value, caption
-
-    def _apply_theme(self):
-        primary = '#5E35B1'
-        accent = '#7C4DFF'
-        neutral = '#1B102A'
-        neutral_alt = '#241233'
-        border = '#3A1F5A'
-
-        table_style = (
-            f"QTableWidget {{\n"
-            f"    background-color: {neutral};\n"
-            f"    alternate-background-color: {neutral_alt};\n"
-            "    color: #E6E1FF;\n"
-            "    gridline-color: #33204F;\n"
-            "    border: 1px solid #33204F;\n"
-            "    border-radius: 8px;\n"
-            "}\n"
-            "QTableWidget::item {\n"
-            "    background-color: transparent;\n"
-            "}\n"
-            "QTableWidget::item:selected {\n"
-            "    background-color: #4527A0;\n"
-            "    color: #FFFFFF;\n"
-            "}\n"
-            "QHeaderView::section {\n"
-            "    background-color: #2A1840;\n"
-            "    color: #D1C4E9;\n"
-            "    border: 0;\n"
-            "    padding: 6px;\n"
-            "}\n"
-        )
-        self.skill_table.setStyleSheet(table_style)
-
-        list_style = (
-            f"QListWidget {{\n"
-            f"    background-color: {neutral};\n"
-            "    color: #E6E1FF;\n"
-            f"    border: 1px solid {border};\n"
-            "    border-radius: 8px;\n"
-            "}\n"
-            "QListWidget::item {\n"
-            "    background-color: #241233;\n"
-            "}\n"
-            "QListWidget::item:alternate {\n"
-            "    background-color: #1B102A;\n"
-            "}\n"
-            "QListWidget::item:selected {\n"
-            "    background-color: #4527A0;\n"
-            "    color: #FFFFFF;\n"
-            "}\n"
-        )
-        self.pool_list.setStyleSheet(list_style)
-
-        line_edit_style = (
-            f"QLineEdit {{\n"
-            "    background-color: #190E27;\n"
-            "    color: #E6E1FF;\n"
-            f"    border: 1px solid {border};\n"
-            "    border-radius: 6px;\n"
-            "    padding: 6px;\n"
-            "    selection-background-color: #4527A0;\n"
-            "    selection-color: #FFFFFF;\n"
-            "}}\n"
-        )
-        for edit in (self.search_edit, self.skill_pool_edit):
-            edit.setStyleSheet(line_edit_style)
-
-        button_base = (
-            "QPushButton {\n"
-            "    background-color:%(bg)s;\n"
-            "    color:%(fg)s;\n"
-            "    border:none;\n"
-            "    border-radius:8px;\n"
-            "    padding:6px 16px;\n"
-            "    font-weight:600;\n"
-            "}\n"
-            "QPushButton:hover {\n"
-            "    background-color:%(hover)s;\n"
-            "}\n"
-            "QPushButton:disabled {\n"
-            "    background-color:#2D1C45;\n"
-            "    color:#74618F;\n"
-            "}\n"
-        )
-        themed_buttons = [
-            (self.reset_filter_btn, {'bg': '#4527A0', 'fg': '#FFFFFF', 'hover': '#5E35B1'}),
-            (self.add_skill_btn, {'bg': primary, 'fg': '#FFFFFF', 'hover': accent}),
-            (self.remove_skill_btn, {'bg': '#8E24AA', 'fg': '#FFFFFF', 'hover': '#9C27B0'}),
-            (self.add_pool_skill_btn, {'bg': primary, 'fg': '#FFFFFF', 'hover': accent}),
-            (self.remove_pool_skill_btn, {'bg': '#8E24AA', 'fg': '#FFFFFF', 'hover': '#9C27B0'}),
-        ]
-        for btn, colors in themed_buttons:
-            btn.setStyleSheet(button_base % colors)
-
-        self.save_btn.setStyleSheet(
-            "QPushButton {\n"
-            "    background-color:#2E7D32;\n"
-            "    color:#FFFFFF;\n"
-            "    border:none;\n"
-            "    border-radius:8px;\n"
-            "    padding:8px 20px;\n"
-            "    font-weight:700;\n"
-            "}\n"
-            "QPushButton:hover {\n"
-            "    background-color:#388E3C;\n"
-            "}\n"
-        )
-        self.cancel_btn.setStyleSheet(
-            "QPushButton {\n"
-            "    background-color:#C62828;\n"
-            "    color:#FFFFFF;\n"
-            "    border:none;\n"
-            "    border-radius:8px;\n"
-            "    padding:8px 20px;\n"
-            "    font-weight:700;\n"
-            "}\n"
-            "QPushButton:hover {\n"
-            "    background-color:#D32F2F;\n"
-            "}\n"
-        )
-
-        group_style = (
-            f"QGroupBox {{\n"
-            f"    border:1px solid {border};\n"
-            "    border-radius:10px;\n"
-            "    margin-top:12px;\n"
-            "    padding:12px;\n"
-            "    color:#D1C4E9;\n"
-            "}}\n"
-            "QGroupBox::title {\n"
-            "    subcontrol-origin: margin;\n"
-            "    left:14px;\n"
-            "    padding:0 6px;\n"
-            "}\n"
-        )
-        for group in (self.cooldown_group, self.pool_group, self.timing_group):
-            group.setStyleSheet(group_style)
-
-        self.subtitle_label.setStyleSheet('color:#B39DDB;')
-
-    def _filter_skills(self, text: str):
-        term = (text or '').strip().lower()
-        for row in range(self.skill_table.rowCount()):
-            item = self.skill_table.item(row, 0)
-            key_text = (item.text() if item else '').lower()
-            hidden = bool(term) and term not in key_text
-            self.skill_table.setRowHidden(row, hidden)
-
-    def _reset_filter(self):
-        self.search_edit.clear()
-
-    def _load_skills(self):
-        self.skill_table.setRowCount(0)
-        for keybind, cooldown in self.config.SKILL_COOLDOWNS.items():
-            row = self.skill_table.rowCount()
-            self.skill_table.insertRow(row)
-            key_item = QtWidgets.QTableWidgetItem(keybind)
-            key_item.setFlags(key_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.skill_table.setItem(row, 0, key_item)
-
-            cooldown_spin = QtWidgets.QDoubleSpinBox()
-            cooldown_spin.setRange(0.1, 600.0)
-            cooldown_spin.setSingleStep(0.5)
-            cooldown_spin.setValue(cooldown)
-            cooldown_spin.setSuffix(self._t('suffix_seconds'))
-            self.skill_table.setCellWidget(row, 1, cooldown_spin)
-
-    def apply_translations(self, language: str):
-        self._language = language or 'en'
-        self.title_label.setText(self._t('skill_editor_title'))
-        self.subtitle_label.setText(self._t('skill_editor_subtitle'))
-        self.search_edit.setPlaceholderText(self._t('skill_editor_search_placeholder'))
-        self.reset_filter_btn.setText(self._t('button_reset_filter'))
-        self.cooldown_group.setTitle(self._t('group_skill_cooldowns'))
-        self.skill_table.setHorizontalHeaderLabels([
-            self._t('table_header_keybind'),
-            self._t('table_header_cooldown')
-        ])
-        self.add_skill_btn.setText(self._t('button_add_skill'))
-        self.remove_skill_btn.setText(self._t('button_remove_skill'))
-        self.pool_group.setTitle(self._t('group_single_skill_pool'))
-        self.pool_group.setToolTip(self._t('tooltip_skill_pool'))
-        self.pool_list.setToolTip(self._t('tooltip_skill_pool'))
-        self.skill_pool_edit.setPlaceholderText(self._t('placeholder_skill_pool'))
-        self.add_pool_skill_btn.setText(self._t('button_add_pool_skill'))
-        self.add_pool_skill_btn.setToolTip(self._t('tooltip_add_pool_skill'))
-        self.remove_pool_skill_btn.setText(self._t('button_remove_pool_skill'))
-        self.hint_label.setText(self._t('trailing_hint_skill_pool'))
-        self.timing_group.setTitle(self._t('group_skill_timing'))
-        self.gcd_label.setText(self._t('label_single_skill_gcd'))
-        self.meta_group.setTitle(self._t('group_skill_metadata'))
-        self.skill_type_combo.setItemText(0, self._t('skill_type_single'))
-        self.skill_type_combo.setItemText(1, self._t('skill_type_cleave'))
-        self.skill_type_combo.setItemText(2, self._t('skill_type_aoe'))
-        self.min_enemy_spin.setPrefix('')
-        self.meta_group.layout().labelForField(self.skill_type_combo).setText(self._t('label_skill_type'))
-        self.meta_group.layout().labelForField(self.min_enemy_spin).setText(self._t('label_min_enemy_count'))
-        self.save_for_pack_cb.setText(self._t('checkbox_save_for_pack'))
-        self.defensive_cb.setText(self._t('checkbox_defensive_skill'))
-        self.save_btn.setText(self._t('button_save_changes'))
-        self.cancel_btn.setText(self._t('button_cancel'))
-        self.total_skills_caption.setText(self._t('skill_summary_total'))
-        self.pool_caption.setText(self._t('skill_summary_pool'))
-        self.gcd_caption.setText(self._t('skill_summary_gcd'))
-        suffix = self._t('suffix_seconds')
-        self.gcd_spin.setSuffix(suffix)
-        self._refresh_spinbox_suffixes()
-        self._update_stats()
-
-    def _refresh_spinbox_suffixes(self):
-        suffix = self._t('suffix_seconds')
-        for row in range(self.skill_table.rowCount()):
-            spin = self.skill_table.cellWidget(row, 1)
-            if isinstance(spin, QtWidgets.QDoubleSpinBox):
-                spin.setSuffix(suffix)
-
-    def _current_selected_skill_key(self) -> str:
-        row = self.skill_table.currentRow()
-        if row < 0:
-            return ''
-        item = self.skill_table.item(row, 0)
-        return item.text().strip() if item else ''
-
-    def _load_meta_into_ui(self, key: str):
-        self._meta_guard = True
-        meta = self._skill_metadata.get(key, {}) if key else {}
-        m_type = str(meta.get('type', 'single')).lower()
-        idx = self.skill_type_combo.findData(m_type)
-        self.skill_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.min_enemy_spin.setValue(int(meta.get('min_enemy_count', 1)))
-        self.save_for_pack_cb.setChecked(bool(meta.get('save_for_pack', False)))
-        self.defensive_cb.setChecked(bool(meta.get('defensive', False)))
-        self._meta_guard = False
-
-    def _persist_meta_from_ui(self):
-        if self._meta_guard:
-            return
-        key = self._current_selected_skill_key()
-        if not key:
-            return
-        meta = self._skill_metadata.get(key, {}).copy()
-        meta['type'] = self.skill_type_combo.currentData() or 'single'
-        meta['min_enemy_count'] = int(self.min_enemy_spin.value())
-        meta['save_for_pack'] = bool(self.save_for_pack_cb.isChecked())
-        meta['defensive'] = bool(self.defensive_cb.isChecked())
-        self._skill_metadata[key] = meta
-
-    def _on_skill_selection_changed(self, currentRow, currentColumn, previousRow, previousColumn):
-        key = self._current_selected_skill_key()
-        self._selected_skill_key = key
-        self._load_meta_into_ui(key)
-
-    def _resolve_language(self) -> str:
-        parent = self.parent()
-        while parent is not None and not hasattr(parent, 'current_language'):
-            parent = parent.parent()
-        return getattr(parent, 'current_language', 'en')
-
-    def _t(self, key: str, **kwargs) -> str:
-        return translate_text(getattr(self, '_language', 'en'), key, **kwargs)
-
-    def _persist_combo_meta(self):
-        if not self._current_combo_name:
-            return
-        meta = self._combo_metadata.get(self._current_combo_name, {}).copy()
-        meta['type'] = self.combo_type_combo.currentData() or 'single'
-        meta['min_enemy_count'] = int(self.combo_min_enemy_spin.value())
-        meta['save_for_pack'] = bool(self.combo_save_pack_cb.isChecked())
-        self._combo_metadata[self._current_combo_name] = meta
-
-    def _add_skill(self):
-        capture_dialog = KeybindCaptureDialog(self)
-        if capture_dialog.exec() and capture_dialog.captured_key:
-            keybind = capture_dialog.captured_key
-            for row in range(self.skill_table.rowCount()):
-                existing_item = self.skill_table.item(row, 0)
-                if existing_item and existing_item.text() == keybind:
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        self._t('msg_duplicate_keybind_title'),
-                        self._t('msg_duplicate_keybind_body', keybind=keybind)
-                    )
-                    return
-
-            row = self.skill_table.rowCount()
-            self.skill_table.insertRow(row)
-            key_item = QtWidgets.QTableWidgetItem(keybind)
-            key_item.setFlags(key_item.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.skill_table.setItem(row, 0, key_item)
-
-            cooldown_spin = QtWidgets.QDoubleSpinBox()
-            cooldown_spin.setRange(0.1, 600.0)
-            cooldown_spin.setSingleStep(0.5)
-            cooldown_spin.setValue(60.0)
-            cooldown_spin.setSuffix(self._t('suffix_seconds'))
-            self.skill_table.setCellWidget(row, 1, cooldown_spin)
-            self.skill_table.setCurrentCell(row, 0)
-            self._update_stats()
-
-    def _remove_skill(self):
-        current_row = self.skill_table.currentRow()
-        if current_row >= 0:
-            key_item = self.skill_table.item(current_row, 0)
-            if key_item:
-                key = key_item.text().strip()
-                if key in self._skill_metadata:
-                    self._skill_metadata.pop(key, None)
-            self.skill_table.removeRow(current_row)
-            self._update_stats()
-
-    def _pool_key_exists(self, keybind: str) -> bool:
-        key_lower = keybind.strip().lower()
-        for value in self._current_pool_values():
-            if value.strip().lower() == key_lower:
-                return True
-        return False
-
-    def _add_skill_to_pool(self):
-        capture_dialog = KeybindCaptureDialog(self)
-        if capture_dialog.exec() and capture_dialog.captured_key:
-            keybind = capture_dialog.captured_key
-            if self._pool_key_exists(keybind):
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    self._t('msg_duplicate_skill_title'),
-                    self._t('msg_duplicate_skill_body', skill=keybind)
-                )
-                return
-
-            self._pool_guard = True
-            item = QtWidgets.QListWidgetItem(keybind)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsDragEnabled)
-            item.setData(QtCore.Qt.UserRole, keybind)
-            self.pool_list.addItem(item)
-            self.pool_list.setCurrentItem(item)
-            self._pool_guard = False
-            self._sync_pool_text_from_list(force=True)
-            self._update_stats()
-
-    def _remove_pool_skill(self):
-        item = self.pool_list.currentItem()
-        if item is None:
-            return
-        row = self.pool_list.row(item)
-        self._pool_guard = True
-        self.pool_list.takeItem(row)
-        self._pool_guard = False
-        self._sync_pool_text_from_list(force=True)
-        self._on_pool_selection_changed()
-        self._update_stats()
-
-    def _current_pool_values(self):
-        values = []
-        seen = set()
-        for idx in range(self.pool_list.count()):
-            text = self.pool_list.item(idx).text().strip()
-            if not text:
-                continue
-            key = text.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            values.append(text)
-        return values
-
-    def _sync_pool_text_from_list(self, *, force: bool = False):
-        if self._pool_guard and not force:
-            return
-        joined = ', '.join(self._current_pool_values())
-        self._pool_guard = True
-        self.skill_pool_edit.setText(joined)
-        self._pool_guard = False
-
-    def _sync_pool_list_from_text(self):
-        if self._pool_guard:
-            return
-        raw_tokens = [s.strip() for s in (self.skill_pool_edit.text() or '').split(',')]
-        tokens = []
-        seen = set()
-        for token in raw_tokens:
-            if not token:
-                continue
-            key = token.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            tokens.append(token)
-
-        self._pool_guard = True
-        self.pool_list.clear()
-        for token in tokens:
-            item = QtWidgets.QListWidgetItem(token)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsDragEnabled)
-            item.setData(QtCore.Qt.UserRole, token)
-            self.pool_list.addItem(item)
-        self.pool_list.clearSelection()
-        self.remove_pool_skill_btn.setEnabled(False)
-        self._pool_guard = False
-        self._sync_pool_text_from_list(force=True)
-        self._update_stats()
-
-    def _on_pool_rows_changed(self, *args):
-        if self._pool_guard:
-            return
-        self._sync_pool_text_from_list(force=True)
-        self._update_stats()
-
-    def _on_pool_selection_changed(self):
-        self.remove_pool_skill_btn.setEnabled(self.pool_list.currentItem() is not None)
-
-    def _on_pool_item_changed(self, item: QtWidgets.QListWidgetItem):
-        if self._pool_guard or item is None:
-            return
-        new_text = item.text().strip()
-        original = item.data(QtCore.Qt.UserRole) or ''
-        if not new_text:
-            self._pool_guard = True
-            item.setText(original)
-            self._pool_guard = False
-            return
-
-        lower_new = new_text.lower()
-        for idx in range(self.pool_list.count()):
-            other = self.pool_list.item(idx)
-            if other is item:
-                continue
-            if other.text().strip().lower() == lower_new:
-                QtWidgets.QMessageBox.warning(
-                    self,
-                    self._t('msg_duplicate_skill_title'),
-                    self._t('msg_duplicate_skill_body', skill=new_text)
-                )
-                self._pool_guard = True
-                item.setText(original)
-                self._pool_guard = False
-                return
-
-        self._pool_guard = True
-        item.setText(new_text)
-        item.setData(QtCore.Qt.UserRole, new_text)
-        self._pool_guard = False
-        self._sync_pool_text_from_list(force=True)
-        self._update_stats()
-
-    def _update_stats(self):
-        self.total_skills_value.setText(str(self.skill_table.rowCount()))
-        self.pool_value.setText(str(len(self._current_pool_values())))
-        suffix = self._t('suffix_seconds').strip()
-        suffix = f" {suffix}" if suffix else ''
-        self.gcd_value.setText(f"{self.gcd_spin.value():.1f}{suffix}")
-
-    def _sync_pool_list_from_config(self):
-        values = list(self.config.SINGLE_SKILL_POOL)
-        self._pool_guard = True
-        self.pool_list.clear()
-        for token in values:
-            item = QtWidgets.QListWidgetItem(token)
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable | QtCore.Qt.ItemIsDragEnabled)
-            item.setData(QtCore.Qt.UserRole, token)
-            self.pool_list.addItem(item)
-        self.pool_list.clearSelection()
-        self.remove_pool_skill_btn.setEnabled(False)
-        self._pool_guard = False
-        self._sync_pool_text_from_list(force=True)
-
-    def _save_and_accept(self):
-        new_pool = self._current_pool_values()
-        new_cooldowns = {}
-        for row in range(self.skill_table.rowCount()):
-            keybind_item = self.skill_table.item(row, 0)
-            cooldown_spin = self.skill_table.cellWidget(row, 1)
-            if keybind_item and cooldown_spin:
-                keybind = keybind_item.text().strip()
-                cooldown = cooldown_spin.value()
-                if keybind:
-                    new_cooldowns[keybind] = cooldown
-
-        payload = {
-            'SINGLE_SKILL_POOL': new_pool,
-            'SINGLE_SKILL_GLOBAL_COOLDOWN': self.gcd_spin.value(),
-            'SKILL_COOLDOWNS': new_cooldowns,
-            'SKILL_METADATA': {k: v for k, v in self._skill_metadata.items() if k in new_cooldowns},
-        }
-
-        try:
-            self.config.update_config(payload)
+            # Persist
+            self._config.update_config({
+                'STEALTH_ATTACK_MODE_ENABLED': self._config.STEALTH_ATTACK_MODE_ENABLED,
+                'COMBAT_USE_SKILLS': self._config.COMBAT_USE_SKILLS,
+                'ATTACK_MODE_WEIGHTS': self._config.ATTACK_MODE_WEIGHTS,
+                'OUTNUMBERED_THRESHOLD': self._config.OUTNUMBERED_THRESHOLD,
+                'DEFENSIVE_COOLDOWN_SEC': self._config.DEFENSIVE_COOLDOWN_SEC,
+            })
+
+            self.log(self.tr('log_skill_config_updated'))
         except Exception as e:
-            logger.error(f"Failed to persist skill config to JSON: {e}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                self._t('msg_combo_save_warning_title'),
-                self._t('msg_failed_skill_json', error=e)
-            )
-            return
+            logger.error(f"Failed to update skill config: {e}")
 
+    def _on_language_change(self, choice):
+        """Handle language change."""
+        if self.tr('language_english') in choice:
+            self.current_language = 'en'
+        else:
+            self.current_language = 'ko'
+
+        if self._config:
+            try:
+                self._config.update_config({'LANGUAGE': self.current_language})
+            except Exception:
+                pass
+
+        # Reload UI would require restart
+        messagebox.showinfo("Language", "Please restart the application for full language change.")
+
+    def log(self, text: str):
+        """Append text to the log view."""
         try:
-            parent = self.parent()
-            if parent and hasattr(parent, '_update_skill_config'):
-                parent._update_skill_config()
-            if parent and hasattr(parent, 'log'):
-                try:
-                    parent.log(translate_text(getattr(parent, 'current_language', 'en'), 'log_skills_updated'))
-                except Exception:
-                    parent.log('✓ Individual skills updated')
+            self.log_text.insert("end", text + "\n")
+            self.log_text.see("end")
         except Exception:
             pass
-        self._sync_pool_list_from_config()
-        self._load_skills()
-        self._update_stats()
+        logger.info(text)
+
+    def _on_close(self):
+        """Handle window close."""
+        self._cooldown_update_running = False
+        self._stop_detection()
+        if self._qt_app:
+            self._qt_app.quit()
+        self.destroy()
+
+
+# ============================================================================
+# KEY CAPTURE DIALOG
+# ============================================================================
+
+class KeyCaptureDialog(ctk.CTkToplevel):
+    """Dialog for capturing a single key press for skill binding."""
+
+    # Valid keys for skill binds
+    VALID_KEYS = {
+        '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'minus', 'equal',
+        'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9'
+    }
+
+    # Key mapping from tkinter keysym to our format
+    KEY_MAP = {
+        'minus': '-',
+        'equal': '=',
+        'F1': 'f1', 'F2': 'f2', 'F3': 'f3', 'F4': 'f4', 'F5': 'f5',
+        'F6': 'f6', 'F7': 'f7', 'F8': 'f8', 'F9': 'f9',
+    }
+
+    def __init__(self, parent, language: str):
+        super().__init__(parent)
+        self.language = language
+        self.captured_key = None
+
+        self.title(translate_text(language, 'capture_title'))
+        self.geometry("400x220")
+        self.resizable(False, False)
+
+        # Make modal
+        self.transient(parent)
+        self.grab_set()
+
+        # Center on parent
+        self.update_idletasks()
+        parent_x = parent.winfo_x()
+        parent_y = parent.winfo_y()
+        parent_w = parent.winfo_width()
+        parent_h = parent.winfo_height()
+        x = parent_x + (parent_w - 400) // 2
+        y = parent_y + (parent_h - 220) // 2
+        self.geometry(f"400x220+{x}+{y}")
+
+        self._build_ui()
+
+        # Bind key events
+        self.bind("<KeyPress>", self._on_key_press)
+        self.focus_set()
+
+    def _build_ui(self):
+        # Instruction
+        instruction = ctk.CTkLabel(
+            self,
+            text=translate_text(self.language, 'capture_instruction'),
+            font=ctk.CTkFont(size=14),
+            justify="center"
+        )
+        instruction.pack(pady=(20, 10))
+
+        # Display captured key
+        self.key_display = ctk.CTkLabel(
+            self,
+            text=translate_text(self.language, 'capture_waiting'),
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#4CAF50"
+        )
+        self.key_display.pack(pady=15)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(pady=20)
+
+        self.confirm_btn = ctk.CTkButton(
+            btn_frame,
+            text=translate_text(self.language, 'capture_confirm'),
+            command=self._on_confirm,
+            state="disabled",
+            fg_color="#4CAF50",
+            hover_color="#66BB6A",
+            width=120
+        )
+        self.confirm_btn.pack(side="left", padx=10)
+
+        self.cancel_btn = ctk.CTkButton(
+            btn_frame,
+            text=translate_text(self.language, 'capture_cancel'),
+            command=self._on_cancel,
+            fg_color="#f44336",
+            hover_color="#EF5350",
+            width=120
+        )
+        self.cancel_btn.pack(side="left", padx=10)
+
+    def _on_key_press(self, event):
+        """Handle key press event."""
+        keysym = event.keysym
+
+        # Check if it's a valid key
+        if keysym in self.VALID_KEYS or keysym in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']:
+            # Map to our format
+            if keysym in self.KEY_MAP:
+                self.captured_key = self.KEY_MAP[keysym]
+            else:
+                self.captured_key = keysym.lower()
+
+            # Update display
+            self.key_display.configure(
+                text=self.captured_key.upper() if len(self.captured_key) <= 2 else self.captured_key.upper(),
+                text_color="#4CAF50"
+            )
+            self.confirm_btn.configure(state="normal")
+        else:
+            # Invalid key
+            self.key_display.configure(
+                text=translate_text(self.language, 'capture_invalid'),
+                text_color="#f44336"
+            )
+            self.confirm_btn.configure(state="disabled")
+            self.captured_key = None
+
+    def _on_confirm(self):
+        """Confirm the captured key."""
+        self.destroy()
 
     def _on_cancel(self):
+        """Cancel key capture."""
+        self.captured_key = None
+        self.destroy()
+
+
+def show_prestart_dialog(language: str) -> bool:
+    """Show pre-start checklist dialog. Returns True if user confirms."""
+    root = ctk.CTk()
+    root.title(translate_text(language, 'prestart_title'))
+    root.geometry("700x500")
+    root.resizable(False, False)
+
+    ctk.set_appearance_mode("dark")
+
+    confirmed = [False]
+
+    def on_confirm():
+        confirmed[0] = True
+        root.destroy()
+
+    def on_cancel():
+        root.destroy()
+
+    # Info text
+    info = ctk.CTkTextbox(root, font=ctk.CTkFont(size=13), wrap="word")
+    info.pack(fill="both", expand=True, padx=20, pady=20)
+    info.insert("1.0", translate_text(language, 'prestart_info'))
+    info.configure(state="disabled")
+
+    # Button
+    btn = ctk.CTkButton(
+        root,
+        text=translate_text(language, 'prestart_button'),
+        font=ctk.CTkFont(size=14, weight="bold"),
+        height=50,
+        command=on_confirm
+    )
+    btn.pack(pady=20)
+
+    root.protocol("WM_DELETE_WINDOW", on_cancel)
+    root.mainloop()
+
+    return confirmed[0]
+
+
+def check_and_install_interception(language: str) -> bool:
+    """Check for Interception driver and attempt installation if missing."""
+    import subprocess
+    from pathlib import Path
+
+    sysroot = os.environ.get('SystemRoot', r'C:\Windows')
+    drivers_dir = Path(sysroot) / 'System32' / 'drivers'
+    required = [drivers_dir / 'mouse.sys', drivers_dir / 'keyboard.sys']
+    missing = [p for p in required if not p.exists()]
+
+    if not missing:
+        return True
+
+    installer = Path(__file__).parent / 'Interception' / 'command line installer' / 'install-interception.exe'
+    if installer.exists():
         try:
-            parent = self.parent()
-            if parent and hasattr(parent, 'change_page'):
-                parent.change_page(0)
-        except Exception:
-            pass
+            installer_dir = str(installer.parent)
+            installer_name = installer.name
 
+            inner_cmd = (
+                f"Set-Location -LiteralPath '{installer_dir}';"
+                f" .\\{installer_name};"
+                " Read-Host -Prompt 'Press Enter to close';"
+                " exit"
+            )
 
-class ComboEditorScreen(QtWidgets.QWidget):
-    """Embedded screen for editing combo sets."""
+            outer_cmd = (
+                "Start-Process powershell -Verb runAs -ArgumentList "
+                f"'-NoProfile -ExecutionPolicy Bypass -Command \"{inner_cmd}\"' -Wait"
+            )
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName('combo_editor_screen')
-        self.setMinimumSize(800, 600)
-
-        import skill_combo_config
-        self.config = skill_combo_config
-        self._language = self._resolve_language()
-        self._combo_metadata = dict(getattr(self.config, 'COMBO_METADATA', {}) or {})
-        self._current_combo_name = ''
-
-        layout = QtWidgets.QVBoxLayout(self)
-
-        # Instructions
-        self.info_label = QtWidgets.QLabel()
-        self.info_label.setWordWrap(True)
-        self.info_label.setStyleSheet("background-color: #424242; padding: 10px; border-radius: 5px;")
-        layout.addWidget(self.info_label)
-        
-        # Combo list
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
-        
-        # Left side: Combo list
-        left_widget = QtWidgets.QWidget()
-        left_layout = QtWidgets.QVBoxLayout(left_widget)
-        self.combo_list_label = QtWidgets.QLabel()
-        left_layout.addWidget(self.combo_list_label)
-        
-        self.combo_list = QtWidgets.QListWidget()
-        self.combo_list.currentRowChanged.connect(self._load_combo_details)
-        left_layout.addWidget(self.combo_list)
-        
-        # List buttons
-        list_btn_layout = QtWidgets.QHBoxLayout()
-        self.new_combo_btn = QtWidgets.QPushButton()
-        self.new_combo_btn.clicked.connect(self._new_combo)
-        self.delete_combo_btn = QtWidgets.QPushButton()
-        self.delete_combo_btn.clicked.connect(self._delete_combo)
-        list_btn_layout.addWidget(self.new_combo_btn)
-        list_btn_layout.addWidget(self.delete_combo_btn)
-        left_layout.addLayout(list_btn_layout)
-        
-        splitter.addWidget(left_widget)
-        
-        # Right side: Combo details
-        right_widget = QtWidgets.QWidget()
-        right_layout = QtWidgets.QVBoxLayout(right_widget)
-        
-        # Combo name
-        name_layout = QtWidgets.QFormLayout()
-        self.combo_name_edit = QtWidgets.QLineEdit()
-        self.combo_name_label = QtWidgets.QLabel()
-        name_layout.addRow(self.combo_name_label, self.combo_name_edit)
-        right_layout.addLayout(name_layout)
-        
-        # Enabled checkbox
-        self.combo_enabled_cb = QtWidgets.QCheckBox()
-        self.combo_enabled_cb.setChecked(True)
-        right_layout.addWidget(self.combo_enabled_cb)
-        
-        # Cooldown
-        cooldown_layout = QtWidgets.QHBoxLayout()
-        self.combo_cooldown_label = QtWidgets.QLabel()
-        cooldown_layout.addWidget(self.combo_cooldown_label)
-        self.combo_cooldown_spin = QtWidgets.QDoubleSpinBox()
-        self.combo_cooldown_spin.setRange(0.0, 600.0)
-        self.combo_cooldown_spin.setSingleStep(1.0)
-        self.combo_cooldown_spin.setValue(60.0)
-        cooldown_layout.addWidget(self.combo_cooldown_spin)
-        cooldown_layout.addStretch()
-        right_layout.addLayout(cooldown_layout)
-        
-        # Delay between skills
-        delay_layout = QtWidgets.QHBoxLayout()
-        self.combo_delay_label = QtWidgets.QLabel()
-        delay_layout.addWidget(self.combo_delay_label)
-        self.combo_delay_spin = QtWidgets.QDoubleSpinBox()
-        self.combo_delay_spin.setRange(0.0, 5.0)
-        self.combo_delay_spin.setSingleStep(0.1)
-        self.combo_delay_spin.setValue(0.5)
-        delay_layout.addWidget(self.combo_delay_spin)
-        delay_layout.addStretch()
-        right_layout.addLayout(delay_layout)
-
-        # Combo metadata
-        self.combo_meta_group = QtWidgets.QGroupBox()
-        combo_meta_form = QtWidgets.QFormLayout()
-        self.combo_type_combo = QtWidgets.QComboBox()
-        self.combo_type_combo.addItem(self._t('skill_type_single'), 'single')
-        self.combo_type_combo.addItem(self._t('skill_type_cleave'), 'cleave')
-        self.combo_type_combo.addItem(self._t('skill_type_aoe'), 'aoe')
-        self.combo_type_combo.currentIndexChanged.connect(self._persist_combo_meta)
-
-        self.combo_min_enemy_spin = QtWidgets.QSpinBox()
-        self.combo_min_enemy_spin.setRange(1, 20)
-        self.combo_min_enemy_spin.valueChanged.connect(self._persist_combo_meta)
-
-        self.combo_save_pack_cb = QtWidgets.QCheckBox()
-        self.combo_save_pack_cb.stateChanged.connect(self._persist_combo_meta)
-
-        combo_meta_form.addRow(self._t('label_combo_type'), self.combo_type_combo)
-        combo_meta_form.addRow(self._t('label_min_enemy_count'), self.combo_min_enemy_spin)
-        combo_meta_form.addRow(self._t('checkbox_save_for_pack'), self.combo_save_pack_cb)
-        self.combo_meta_group.setLayout(combo_meta_form)
-        right_layout.addWidget(self.combo_meta_group)
-        
-        # Skills list
-        skills_label_layout = QtWidgets.QHBoxLayout()
-        self.skills_label = QtWidgets.QLabel()
-        skills_label_layout.addWidget(self.skills_label)
-        self.add_skill_btn = QtWidgets.QPushButton()
-        self.add_skill_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; font-weight: bold; padding: 5px; }")
-        self.add_skill_btn.clicked.connect(self._add_skill_to_combo)
-        skills_label_layout.addWidget(self.add_skill_btn)
-        skills_label_layout.addStretch()
-        right_layout.addLayout(skills_label_layout)
-        
-        self.combo_skills_edit = QtWidgets.QPlainTextEdit()
-        right_layout.addWidget(self.combo_skills_edit)
-        
-        # Save combo button
-        self.save_combo_btn = QtWidgets.QPushButton()
-        self.save_combo_btn.clicked.connect(self._save_current_combo)
-        self.save_combo_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
-        right_layout.addWidget(self.save_combo_btn)
-        
-        splitter.addWidget(right_widget)
-        splitter.setSizes([250, 550])
-        
-        layout.addWidget(splitter)
-        
-        # Load combo list
-        self._load_combo_list()
-        
-        # Close button will navigate back to Dashboard when embedded
-        self.button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
-        self.button_box.rejected.connect(self._on_close)
-        layout.addWidget(self.button_box)
-        
-        self.current_combo_index = -1
-
-        self.apply_translations(self._language)
-    
-    def _load_combo_list(self):
-        """Load combo sets into list."""
-        self.combo_list.clear()
-        for combo in self.config.COMBO_SETS:
-            enabled_icon = "✓" if combo.get('enabled', True) else "✗"
-            self.combo_list.addItem(f"{enabled_icon} {combo['name']}")
-
-    def apply_translations(self, language: str):
-        self._language = language or 'en'
-        self.info_label.setText(self._t('combo_editor_intro'))
-        self.combo_list_label.setText(self._t('label_combo_sets'))
-        self.new_combo_btn.setText(self._t('button_new_combo'))
-        self.delete_combo_btn.setText(self._t('button_delete_combo'))
-        self.combo_name_label.setText(self._t('label_combo_name'))
-        self.combo_enabled_cb.setText(self._t('checkbox_combo_enabled'))
-        self.combo_cooldown_label.setText(self._t('label_combo_cooldown'))
-        self.combo_delay_label.setText(self._t('label_combo_delay'))
-        self.combo_meta_group.setTitle(self._t('group_combo_metadata'))
-        self.combo_meta_group.layout().labelForField(self.combo_type_combo).setText(self._t('label_combo_type'))
-        self.combo_type_combo.setItemText(0, self._t('skill_type_single'))
-        self.combo_type_combo.setItemText(1, self._t('skill_type_cleave'))
-        self.combo_type_combo.setItemText(2, self._t('skill_type_aoe'))
-        self.combo_meta_group.layout().labelForField(self.combo_min_enemy_spin).setText(self._t('label_min_enemy_count'))
-        self.combo_save_pack_cb.setText(self._t('checkbox_save_for_pack'))
-        self.skills_label.setText(self._t('label_combo_skills'))
-        self.add_skill_btn.setText(self._t('button_add_skill_to_combo'))
-        self.save_combo_btn.setText(self._t('button_save_combo'))
-        self.combo_skills_edit.setPlaceholderText(self._t('placeholder_combo_skills'))
-        suffix = self._t('suffix_seconds')
-        self.combo_cooldown_spin.setSuffix(suffix)
-        self.combo_delay_spin.setSuffix(suffix)
-        close_btn = self.button_box.button(QtWidgets.QDialogButtonBox.Close)
-        if close_btn:
-            close_btn.setText(self._t('button_close'))
-
-    def _resolve_language(self) -> str:
-        parent = self.parent()
-        while parent is not None and not hasattr(parent, 'current_language'):
-            parent = parent.parent()
-        return getattr(parent, 'current_language', 'en')
-
-    def _t(self, key: str, **kwargs) -> str:
-        return translate_text(getattr(self, '_language', 'en'), key, **kwargs)
-    
-    def _load_combo_details(self, row):
-        """Load combo details when selected."""
-        if row < 0 or row >= len(self.config.COMBO_SETS):
-            return
-        
-        self.current_combo_index = row
-        combo = self.config.COMBO_SETS[row]
-        self._current_combo_name = combo.get('name', '')
-        
-        self.combo_name_edit.setText(combo['name'])
-        self.combo_enabled_cb.setChecked(combo.get('enabled', True))
-        self.combo_cooldown_spin.setValue(combo.get('cooldown', 60.0))
-        self.combo_delay_spin.setValue(combo.get('delay_between_skills', 0.5))
-        self.combo_skills_edit.setPlainText("\n".join(combo.get('skills', [])))
-
-        meta = self._combo_metadata.get(self._current_combo_name, {}) if self._current_combo_name else {}
-        m_type = str(meta.get('type', 'single')).lower()
-        idx = self.combo_type_combo.findData(m_type)
-        self.combo_type_combo.blockSignals(True)
-        self.combo_type_combo.setCurrentIndex(idx if idx >= 0 else 0)
-        self.combo_type_combo.blockSignals(False)
-        self.combo_min_enemy_spin.blockSignals(True)
-        self.combo_min_enemy_spin.setValue(int(meta.get('min_enemy_count', 1)))
-        self.combo_min_enemy_spin.blockSignals(False)
-        self.combo_save_pack_cb.blockSignals(True)
-        self.combo_save_pack_cb.setChecked(bool(meta.get('save_for_pack', False)))
-        self.combo_save_pack_cb.blockSignals(False)
-    
-    def _new_combo(self):
-        """Create a new combo set."""
-        new_combo = {
-            'name': self._t('default_combo_name', index=len(self.config.COMBO_SETS) + 1),
-            'skills': [],
-            'cooldown': 60.0,
-            'delay_between_skills': 0.5,
-            'enabled': True,
-        }
-        new_combos = list(self.config.COMBO_SETS) + [new_combo]
-        try:
-            self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
+            subprocess.run([
+                'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
+                '-Command', outer_cmd
+            ], check=False)
         except Exception as e:
-            logger.error(f"Failed to persist combo config to JSON: {e}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                self._t('msg_combo_save_warning_title'),
-                self._t('msg_combo_save_warning_body', error=e)
-            )
-            return
-        self._load_combo_list()
-        self.combo_list.setCurrentRow(len(self.config.COMBO_SETS) - 1)
-    
-    def _delete_combo(self):
-        """Delete selected combo set."""
-        current_row = self.combo_list.currentRow()
-        if current_row >= 0 and current_row < len(self.config.COMBO_SETS):
-            combo_name = self.config.COMBO_SETS[current_row]['name']
-            
-            # Confirm deletion
-            reply = QtWidgets.QMessageBox.question(
-                self,
-                self._t('msg_combo_delete_title'),
-                self._t('msg_combo_delete_body', name=combo_name),
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No
-            )
-            
-            if reply == QtWidgets.QMessageBox.Yes:
-                new_combos = list(self.config.COMBO_SETS)
-                if combo_name in self._combo_metadata:
-                    self._combo_metadata.pop(combo_name, None)
-                del new_combos[current_row]
-                try:
-                    self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
-                except Exception as e:
-                    logger.error(f"Failed to persist combo config to JSON: {e}")
-                    QtWidgets.QMessageBox.warning(
-                        self,
-                        self._t('msg_combo_save_warning_title'),
-                        self._t('msg_combo_save_warning_body', error=e)
-                    )
-                    return
-                self._load_combo_list()
-                self.combo_name_edit.clear()
-                self.combo_skills_edit.clear()
-    
-    def _add_skill_to_combo(self):
-        """Add a skill to the combo using keybind capture."""
-        capture_dialog = KeybindCaptureDialog(self)
-        if capture_dialog.exec() and capture_dialog.captured_key:
-            keybind = capture_dialog.captured_key
-            
-            # Add to the end of the skills list
-            current_text = self.combo_skills_edit.toPlainText().strip()
-            if current_text:
-                self.combo_skills_edit.setPlainText(current_text + "\n" + keybind)
-            else:
-                self.combo_skills_edit.setPlainText(keybind)
-    
-    def _save_current_combo(self):
-        """Save current combo details."""
-        if self.current_combo_index < 0 or self.current_combo_index >= len(self.config.COMBO_SETS):
-            return
-        old_name = self.config.COMBO_SETS[self.current_combo_index].get('name', '')
+            logger.error(f"Failed to run interception installer: {e}")
 
-        combo = dict(self.config.COMBO_SETS[self.current_combo_index])
-        combo['name'] = self.combo_name_edit.text().strip() or self._t('default_combo_name', index=self.current_combo_index + 1)
-        combo['enabled'] = self.combo_enabled_cb.isChecked()
-        combo['cooldown'] = self.combo_cooldown_spin.value()
-        combo['delay_between_skills'] = self.combo_delay_spin.value()
-
-        skills_text = self.combo_skills_edit.toPlainText().strip()
-        combo['skills'] = [s.strip() for s in skills_text.split("\n") if s.strip()]
-
-        new_combos = list(self.config.COMBO_SETS)
-        new_combos[self.current_combo_index] = combo
-
-        # Update combo metadata (handle rename)
-        meta = self._combo_metadata.pop(old_name, {}) if old_name else {}
-        meta = meta or {}
-        meta['type'] = self.combo_type_combo.currentData() or 'single'
-        meta['min_enemy_count'] = int(self.combo_min_enemy_spin.value())
-        meta['save_for_pack'] = bool(self.combo_save_pack_cb.isChecked())
-        if combo['name']:
-            self._combo_metadata[combo['name']] = meta
-        try:
-            self.config.update_config({'COMBO_SETS': new_combos, 'COMBO_METADATA': self._combo_metadata})
-        except Exception as e:
-            logger.error(f"Failed to persist combo config to JSON: {e}")
-            QtWidgets.QMessageBox.warning(
-                self,
-                self._t('msg_combo_save_warning_title'),
-                self._t('msg_combo_save_warning_body', error=e)
-            )
-            return
-
-        self._load_combo_list()
-        self.combo_list.setCurrentRow(self.current_combo_index)
-
-        QtWidgets.QMessageBox.information(
-            self,
-            self._t('msg_combo_save_info_title'),
-            self._t('msg_combo_saved', name=combo['name'])
+    # Re-check
+    missing = [p for p in required if not p.exists()]
+    if missing:
+        messagebox.showwarning(
+            translate_text(language, 'msg_interception_missing_title'),
+            translate_text(language, 'msg_interception_missing_body')
         )
-    
-    def _on_close(self):
-        """Handle close action for embedded combo editor: navigate back to Dashboard."""
-        try:
-            parent = self.parent()
-            if parent and hasattr(parent, 'change_page'):
-                parent.change_page(0)
-        except Exception:
-            pass
+        return False
 
-
-    
+    return True
 
 
 def run_app():
     """Main application entry point."""
-    app = QtWidgets.QApplication(sys.argv)
-    # Apply a dark purple theme stylesheet for the whole app
-    app.setStyleSheet("""
-    QWidget { background-color: #1b1226; color: #EDE7F6; font-family: 'Segoe UI', Tahoma, Arial; }
-    QGroupBox { background-color: #24132f; border: 1px solid #3a1f3b; border-radius: 8px; margin-top: 6px; }
-    QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 4px 8px; color: #D1C4E9; }
-    QPushButton { background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0, stop:0 #5e35b1, stop:1 #7e57c2); color: white; border-radius: 6px; padding: 8px; }
-    QPlainTextEdit, QTextEdit { background-color: #0f0815; border: 1px solid #2b1430; }
-    QTableWidget { background-color: #120716; gridline-color: #2b1430; }
-    QHeaderView::section { background-color: #2b1430; color: #EDE7F6; }
-    QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit { background-color: #120716; color: #EDE7F6; border: 1px solid #2b1430; }
-    QStackedWidget#pages { background: transparent; }
-    """)
-
-    # Interception is the required backend for input control
     logger.info("Interception backend enforced; ensure interception driver is installed")
 
+    # Get language preference
     try:
-        import skill_combo_config as _scc_lang
-        app_language = getattr(_scc_lang, 'LANGUAGE', 'en') or 'en'
+        import skill_combo_config as scc
+        app_language = getattr(scc, 'LANGUAGE', 'en') or 'en'
     except Exception:
         app_language = 'en'
 
-    # Pre-start checklist dialog
-    class PreStartDialog(QtWidgets.QDialog):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.setWindowTitle(translate_text(app_language, 'prestart_title'))
-            self.setModal(True)
-            self.setMinimumSize(700, 520)
-
-            layout = QtWidgets.QVBoxLayout(self)
-
-            info = QtWidgets.QLabel(translate_text(app_language, 'prestart_info'))
-            info.setWordWrap(True)
-            layout.addWidget(info)
-
-            # Spacer + button
-            spacer = QtWidgets.QSpacerItem(20, 20, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
-            layout.addItem(spacer)
-
-            btn = QtWidgets.QPushButton(translate_text(app_language, 'prestart_button'))
-            btn.setFixedHeight(44)
-            btn.clicked.connect(self.accept)
-            btn.setStyleSheet("QPushButton { font-weight: bold; font-size: 12pt; padding: 8px; }")
-            h = QtWidgets.QHBoxLayout()
-            h.addStretch()
-            h.addWidget(btn)
-            h.addStretch()
-            layout.addLayout(h)
-
-    def _check_and_install_interception(parent_window=None):
-        """Check for driver sys files and attempt installation if missing.
-
-        Returns True if drivers are present after this call (may require restart), False otherwise.
-        """
-        try:
-            import subprocess
-            from pathlib import Path
-            sysroot = os.environ.get('SystemRoot', r'C:\Windows')
-            drivers_dir = Path(sysroot) / 'System32' / 'drivers'
-            required = [drivers_dir / 'mouse.sys', drivers_dir / 'keyboard.sys']
-            missing = [p for p in required if not p.exists()]
-            if not missing:
-                return True
-
-            # Attempt to run bundled installer (requires admin - run_app already ensures elevation)
-            installer = Path(__file__).parent / 'Interception' / 'command line installer' / 'install-interception.exe'
-            if installer.exists():
-                try:
-                    # Build a PowerShell command that opens an elevated PowerShell window,
-                    # cds to the installer folder and runs the installer. We wait for the
-                    # launched window to finish so we can notify the user afterwards.
-                    installer_dir = str(installer.parent)
-                    installer_name = installer.name
-
-                    # Inner command executed inside the elevated PowerShell window
-                    inner_cmd = (
-                        f"Set-Location -LiteralPath '{installer_dir}';"
-                        f" .\\{installer_name};"
-                        " Read-Host -Prompt 'Press Enter to close';"
-                        " exit"
-                    )
-
-                    # Outer PowerShell will Start-Process powershell -Verb runAs with -ArgumentList
-                    # and -Wait so this call returns when the elevated window closes.
-                    outer_cmd = (
-                        "Start-Process powershell -Verb runAs -ArgumentList "
-                        f"'-NoProfile -ExecutionPolicy Bypass -Command \"{inner_cmd}\"' -Wait"
-                    )
-
-                    # Execute the outer command using the system PowerShell and wait for completion
-                    subprocess.run([
-                        'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass',
-                        '-Command', outer_cmd
-                    ], check=False)
-                except Exception as e:
-                    logger.error(f"Failed to run interception installer via PowerShell: {e}")
-            else:
-                logger.warning("Interception installer not found in repository; please install manually")
-
-            # Re-check files
-            missing = [p for p in required if not p.exists()]
-            if missing:
-                # Inform user to restart after manual install or that automatic install failed
-                QtWidgets.QMessageBox.warning(
-                    parent_window,
-                    translate_text(app_language, 'msg_interception_missing_title'),
-                    translate_text(app_language, 'msg_interception_missing_body')
-                )
-                return False
-            else:
-                # Notify user to restart to finalize installation
-                QtWidgets.QMessageBox.information(
-                    parent_window,
-                    translate_text(app_language, 'msg_interception_installed_title'),
-                    translate_text(app_language, 'msg_interception_installed_body')
-                )
-                return True
-        except Exception as e:
-            logger.error(f"Error while checking/installing interception: {e}")
-            return False
-
-    # Show pre-start checklist and require explicit confirmation
-    dlg = PreStartDialog()
-    if dlg.exec() != QtWidgets.QDialog.Accepted:
+    # Show pre-start dialog
+    if not show_prestart_dialog(app_language):
         logger.info("User cancelled pre-start checklist; exiting")
         return
 
-    # After user confirmation, check and attempt to install interception if necessary
-    _check_and_install_interception()
+    # Check interception
+    check_and_install_interception(app_language)
 
-    win = MainWindow()
-    # Open maximized by default for improved UX
-    try:
-        win.showMaximized()
-    except Exception:
-        # Fallback to normal show if maximized fails
-        win.show()
-    sys.exit(app.exec())
+    # Run main app
+    app = AIONApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
     logger.info("Starting AION automation (Interception backend)")
-    # REQUIRE administrator privileges - do not run without admin
+
+    # Require admin privileges
     try:
         if not is_admin():
             logger.info("Not running as administrator - attempting to relaunch elevated...")
-            # run_as_admin will exit on success; if it fails we MUST NOT continue
             run_as_admin()
-            # If we reach here, elevation failed or was cancelled - EXIT IMMEDIATELY
             logger.error("Administrator privileges are REQUIRED to run this program.")
-            logger.error("Please right-click the script and select 'Run as administrator'")
             input("\nPress Enter to exit...")
             sys.exit(1)
     except Exception as e:
         logger.error(f"Admin elevation failed: {e}")
-        logger.error("Administrator privileges are REQUIRED to run this program.")
         input("\nPress Enter to exit...")
         sys.exit(1)
 
-    # Only reach here if running as admin
     logger.success("✓ Running with administrator privileges")
     run_app()

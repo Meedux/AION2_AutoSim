@@ -185,9 +185,19 @@ class SkillComboManager:
         """
         combo_name = combo.get('name', 'unnamed')
         skills = combo.get('skills', [])
-        delay = combo.get('delay_between_skills', 0.5)
         
-        logger.info(f"Executing combo: {combo_name} ({len(skills)} skills)")
+        # Use fast mode delay if enabled, otherwise use combo's configured delay
+        if getattr(skill_combo_config, 'FAST_MODE_ENABLED', True):
+            enemy_count = getattr(self, '_enemy_count', 0)
+            panic_threshold = getattr(skill_combo_config, 'PANIC_THRESHOLD', 3)
+            if enemy_count >= panic_threshold:
+                delay = getattr(skill_combo_config, 'PANIC_MODE_SKILL_DELAY', 0.08)
+            else:
+                delay = getattr(skill_combo_config, 'FAST_MODE_SKILL_DELAY', 0.12)
+        else:
+            delay = combo.get('delay_between_skills', 0.5)
+        
+        logger.info(f"Executing combo: {combo_name} ({len(skills)} skills, delay={delay:.2f}s)")
         
         try:
             # Ensure combo and skills are ready before executing

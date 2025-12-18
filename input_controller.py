@@ -72,6 +72,15 @@ else:
 # Compatibility / state
 ACTIVE_HWND: Optional[int] = None
 
+# Focus caching to avoid redundant focus calls (saves ~190ms per avoided focus)
+_last_focus_time: float = 0.0
+_FOCUS_CACHE_DURATION: float = 2.0  # Seconds before forcing re-focus
+
+# Fast input timing constants
+_KEY_PRESS_DURATION_FAST: float = 0.008  # 8ms for combat-critical keys
+_KEY_PRESS_DURATION_NORMAL: float = 0.010  # 10ms for regular keys (was 20ms)
+_KEY_INTERVAL_FAST: float = 0.025  # 25ms between consecutive presses (was 50ms)
+
 
 def open_driver(path: str = None):
     # compatibility shim — always ready
@@ -127,23 +136,40 @@ def focus_window(hwnd: int):
         logger.debug("focus_window: unable to focus hwnd=%s" % (str(hwnd)))
 
 
-def _ensure_focus():
+def _ensure_focus(force: bool = False):
     """Ensure the currently configured `ACTIVE_HWND` is foreground (best-effort).
 
     This helper is used before sending inputs so macros are more likely to
-    be accepted by the game. It's intentionally best-effort and will never
-    raise exceptions to callers.
+    be accepted by the game. Uses focus caching to skip redundant calls.
+    Set force=True to bypass the cache (e.g., periodic safety re-focus).
     """
+    global _last_focus_time
     try:
         if ACTIVE_HWND is None:
             return
+        now = time.time()
+        # Skip focus if recently focused (cache hit) and not forced
+        if not force and (now - _last_focus_time) < _FOCUS_CACHE_DURATION:
+            if is_window_foreground(ACTIVE_HWND):
+                return  # Still focused, skip
         if not is_window_foreground(ACTIVE_HWND):
             focus_window(ACTIVE_HWND)
-            # slight delay after focusing to give the OS/game time to accept it
-            time.sleep(0.03)
+            _last_focus_time = now
+            # Reduced delay after focusing
+            time.sleep(0.02)
+        else:
+            _last_focus_time = now
     except Exception:
         # swallow errors; focusing is best-effort
         pass
+
+
+def force_focus():
+    """Force re-focus the active window, bypassing the cache.
+    
+    Call this periodically during combat as a safety net.
+    """
+    _ensure_focus(force=True)
 
 
 # Local helper for key name translation
@@ -189,15 +215,26 @@ def _vk_to_scancode(vk: int) -> int:
         return int(vk)
 
 
-def tap_key(key: str, presses: int = 1, interval: float = 0.05):
-    """Press a key using the Interception backend.
+def tap_key(key: str, presses: int = 1, interval: float = 0.025):
+    """Press a key using the Interception backend with duplicate prevention.
 
     Returns True on success. In DRY_RUN mode logs the call and returns True.
+    Default interval reduced to 25ms for faster input.
+    Uses combat queue to prevent double presses.
     """
     key_name = _translate_key(key)
     if _is_dry_run():
         logger.info(f"DRY_RUN: tap_key({key_name}, presses={presses}, interval={interval})")
         return True
+
+    # Combat queue duplicate prevention
+    try:
+        from combat_queue import get_combat_queue, ActionType
+        queue = get_combat_queue()
+        if not queue.execute_immediate(key_name, ActionType.SKILL, source="tap_key"):
+            return False  # Blocked as duplicate
+    except ImportError:
+        pass  # Combat queue not available, continue without duplicate prevention
 
     # Ensure the configured target window has focus before sending inputs
     try:
@@ -207,7 +244,38 @@ def tap_key(key: str, presses: int = 1, interval: float = 0.05):
     # Interception-only: ensure driver/DLL loaded then dispatch
     if not _load_interception():
         raise RuntimeError('Interception backend required but interception DLL/driver failed to load. See logs and ensure the Interception driver is installed and the DLL is present under Interception/library/x64/')
-    return _tap_key_interception(key_name, presses=presses, interval=interval)
+    return _tap_key_interception(key_name, presses=presses, interval=interval, fast=False)
+
+
+def tap_key_fast(key: str, presses: int = 1):
+    """Press a key with minimal delay for combat-critical inputs.
+    
+    Uses 8ms press duration and 25ms interval for maximum speed.
+    Ideal for R, T, skill keys during aggressive combat.
+    Uses combat queue to prevent double presses.
+    """
+    key_name = _translate_key(key)
+    if _is_dry_run():
+        logger.info(f"DRY_RUN: tap_key_fast({key_name}, presses={presses})")
+        return True
+
+    # Combat queue duplicate prevention
+    try:
+        from combat_queue import get_combat_queue, ActionType
+        queue = get_combat_queue()
+        action_type = ActionType.BASIC_ATTACK if key_name in ('r', 't') else ActionType.SKILL
+        if not queue.execute_immediate(key_name, action_type, source="tap_key_fast"):
+            return False  # Blocked as duplicate
+    except ImportError:
+        pass  # Combat queue not available
+
+    try:
+        _ensure_focus()
+    except Exception:
+        pass
+    if not _load_interception():
+        raise RuntimeError('Interception backend required but interception DLL/driver failed to load')
+    return _tap_key_interception(key_name, presses=presses, interval=_KEY_INTERVAL_FAST, fast=True)
 
 
 def hold_key(key: str, duration: float):
@@ -380,11 +448,11 @@ except Exception:
 # Minimal Interception-only implementation
 # --------------------------
 
-def _tap_key_interception(key_name: str, presses: int = 1, interval: float = 0.05) -> bool:
+def _tap_key_interception(key_name: str, presses: int = 1, interval: float = 0.025, fast: bool = False) -> bool:
     # Interception-only: send using the interception DLL. No fallbacks allowed.
     if not _load_interception():
         raise RuntimeError('Interception DLL/driver not loaded')
-    ok = _interception_send_key(key_name, presses=presses, interval=interval)
+    ok = _interception_send_key(key_name, presses=presses, interval=interval, fast=fast)
     if not ok:
         raise RuntimeError(f'Interception failed to send key: {key_name}')
     return True
@@ -608,7 +676,7 @@ class _InterceptionKeyStroke(ctypes.Structure):
     _fields_ = [('code', ctypes.c_ushort), ('state', ctypes.c_ushort), ('information', ctypes.c_uint)]
 
 
-def _interception_send_key(key_name: str, presses: int = 1, interval: float = 0.05) -> bool:
+def _interception_send_key(key_name: str, presses: int = 1, interval: float = 0.025, fast: bool = False) -> bool:
     if not _load_interception():
         return False
     # use device 1 (INTERCEPTION_KEYBOARD(0) == 1)
@@ -620,6 +688,8 @@ def _interception_send_key(key_name: str, presses: int = 1, interval: float = 0.
     if vk is None:
         return False
     sc = _vk_to_scancode(vk)
+    # Use faster timing for combat-critical keys
+    press_duration = _KEY_PRESS_DURATION_FAST if fast else _KEY_PRESS_DURATION_NORMAL
     for i in range(presses):
         stroke_down = _InterceptionKeyStroke(code=sc, state=0, information=0)
         stroke_up = _InterceptionKeyStroke(code=sc, state=1, information=0)
@@ -627,12 +697,12 @@ def _interception_send_key(key_name: str, presses: int = 1, interval: float = 0.
         res = _INTERCEPTION_DLL.interception_send(_INTERCEPTION_CTX, device, ctypes.byref(stroke_down), 1)
         if res == 0:
             return False
-        time.sleep(0.02)
+        time.sleep(press_duration)  # 8ms fast, 10ms normal (was 20ms)
         res = _INTERCEPTION_DLL.interception_send(_INTERCEPTION_CTX, device, ctypes.byref(stroke_up), 1)
         if res == 0:
             return False
         if presses > 1 and i < presses - 1:
-            time.sleep(max(interval, 0.01))
+            time.sleep(max(interval, 0.008))  # Minimum 8ms between presses
     return True
 
 

@@ -2,10 +2,13 @@
 
 Behavior implemented per user spec:
  - The planner ONLY reacts to detections with class `monster`.
- - On detection the planner uses keyboard targeting: press `Tab` to lock the target and use `R`/`T` for light/heavy single-press attacks (no mouse double-clicks, no movement macros).
- - After target acquisition the planner enters a COMBAT period (duration depends on target size & distance, minimum 5s) then a 5s cooldown where `F` is pressed randomly.
+ - Skills and attacks auto-target the nearest enemy (no Tab targeting needed).
+ - FAST-PACED COMBAT: Attack interval (0.20-0.35s), panic mode (0.10-0.18s) at 3+ enemies.
+ - Mid-combat looting: Press F every 1.5s during combat to pick up drops.
+ - PANIC MODE: When 3+ enemies detected, enters aggressive mode with reduced delays.
+ - After combat the planner enters cooldown where `F` is pressed randomly.
 
-This module uses `input_controller` to send OS-level inputs.
+This module uses `input_controller` to send OS-level inputs via Interception driver.
 
 (Stealth mode removed) Uses deterministic timings and immediate actions.
 """
@@ -76,17 +79,47 @@ class ActionPlanner:
         self._combat_until = 0.0
         self._cooldown_until = 0.0
         self._last_attack = 0.0
-        self._attack_interval = (0.45, 1.25)  # seconds between R/T presses during combat
+        self._attack_interval = (0.15, 0.28)  # FASTER basic attacks between skills
+        self._panic_attack_interval = (0.08, 0.15)  # even faster in panic mode
         self._last_cooldown_action = 0.0
-        self._cooldown_f_interval = (0.6, 1.8)  # random press F intervals during 5s cooldown
+        self._cooldown_f_interval = (0.6, 1.8)  # random press F intervals during cooldown ONLY
+        
+        # PANIC MODE: 3+ enemies triggers aggressive combat with random skill spam
+        self._panic_threshold = 3
+        self._panic_mode = False
+        
+        # REMOVED: Mid-combat looting - F is now ONLY pressed during cooldown phase
+        # self._combat_loot_interval = 1.5
+        # self._last_combat_loot = 0.0
+        
+        # SEQUENTIAL R/T ALTERNATION - 2 second interval between light/heavy attacks
+        self._last_attack_type = None  # 'r' (light) or 't' (heavy)
+        self._attack_alternation_interval = 2.0  # seconds between switching attack type
+        self._last_attack_switch_time = 0.0
+        
+        # SEQUENTIAL COMBAT PATTERN: attack -> skill -> attack -> combo in sequence
+        self._combat_pattern_index = 0
+        self._combat_patterns = ['attack', 'attack', 'skill', 'attack', 'attack', 'combo', 'attack']
+        self._last_pattern_action = 0.0
+        self._pattern_action_interval = (0.20, 0.40)  # FAST pattern execution
+        
+        # RANDOM COMBAT TRIGGER during roaming (configurable chance)
+        try:
+            import skill_combo_config as scc
+            self._random_combat_chance = getattr(scc, 'RANDOM_COMBAT_CHANCE', 0.50)
+        except Exception:
+            self._random_combat_chance = 0.50
+        self._last_random_combat_check = 0.0
+        self._random_combat_check_interval = 3.0  # check every 3s during roam
+        
         # roaming (idle movement) state
         self._roaming = False
         self._roam_thread = None
         self._last_roam_time = 0.0
-        self._roam_cooldown = (3.0, 8.0)  # seconds between roam attempts
+        self._roam_cooldown = (1.0, 2.0)  # FASTER: 1-2s between roam attempts (was 3-8s)
         # consecutive no-detections counter (trigger roam after N empties)
         self._no_mobs_count = 0
-        self._no_mobs_threshold = 5
+        self._no_mobs_threshold = 2  # FASTER: trigger roam after 2 empty frames (was 5)
         # store last detections so roaming thread can re-check for monsters
         self._last_detections: List[Dict] = []
         # defensive cadence guard
@@ -318,27 +351,30 @@ class ActionPlanner:
                 mobs.sort(key=score_m)
                 candidate = mobs[0]
 
-                # Acquire target: press tab to lock-on and then trigger an attack (R or T)
+                # Engage target: skills auto-target so just attack immediately (no Tab needed)
                 try:
                     ic.focus_window(self.hwnd)
-                    # Press Tab to target (single press)
-                    ic.tap_key('tab')
-                    # small human-like delay
-                    time.sleep(random.uniform(0.08, 0.20))
-                    # press either 'r' or 't' once
+                    # Immediate attack - skills and attacks auto-target nearest enemy
                     atk = random.choice(['r', 't'])
                     ic.tap_key(atk)
-                    logger.info(f"ActionPlanner: target acquired via TAB and initial attack '{atk.upper()}'")
+                    logger.info(f"ActionPlanner: engaging with initial attack '{atk.upper()}' (auto-target)")
                 except Exception as e:
-                    logger.error(f"ActionPlanner: initial target/attack failed: {e}")
+                    logger.error(f"ActionPlanner: initial attack failed: {e}")
 
+                # Check for panic mode (3+ enemies)
+                self._panic_mode = (enemy_count >= self._panic_threshold)
+                if self._panic_mode:
+                    logger.warning(f"⚠️ PANIC MODE: {enemy_count} enemies detected!")
+                
                 # start combat mode with duration based on target size/distance
                 dur = self._compute_combat_duration(candidate, w, h)
                 self._current_target = candidate
                 self._combat_until = time.time() + dur
                 self._mode = 'combat'
                 self._last_attack = 0.0
-                logger.info(f"ActionPlanner: entering COMBAT mode for {dur:.1f}s")
+                self._combat_pattern_index = 0  # reset sequential combat pattern
+                self._last_pattern_action = 0.0
+                logger.info(f"ActionPlanner: entering COMBAT mode for {dur:.1f}s (panic={self._panic_mode})")
                 return
 
         # If in combat but lost the target while others remain, re-enter scanning to retarget
@@ -349,9 +385,17 @@ class ActionPlanner:
                 self._mode = 'scanning'
                 self._current_target = None
 
-        # During COMBAT, perform R/T attacks at humanlike intervals
+        # During COMBAT, perform sequential pattern: attack -> skill -> attack -> combo
         if self._mode == 'combat':
             if time.time() < self._combat_until:
+                # Update panic mode status based on current enemy count
+                self._panic_mode = (enemy_count >= self._panic_threshold)
+                
+                # Choose attack interval based on panic mode
+                attack_interval = self._panic_attack_interval if self._panic_mode else self._attack_interval
+                
+                # NO MID-COMBAT F PRESS - F is ONLY pressed during cooldown phase after combat ends
+                
                 # Defensive trigger if outnumbered
                 try:
                     import skill_combo_config as scc
@@ -365,71 +409,94 @@ class ActionPlanner:
                 except Exception:
                     pass
 
-                # Always fire ready combos/skills immediately when available
-                if (self.skill_combo_manager is not None
-                        and getattr(skill_combo_config, 'SKILL_COMBO_ENABLED', True)
-                        and getattr(skill_combo_config, 'COMBAT_USE_SKILLS', True)):
+                # PANIC MODE: Random skill spam - rapidly execute random skills
+                if self._panic_mode:
                     try:
-                        has_health = True
-                        ready_combo = self.skill_combo_manager.has_ready_combo()
-                        ready_single = self.skill_combo_manager.has_available_single_skill()
-                        if ready_combo or ready_single:
-                            mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
-                            if mode != 'standard_attack' and success:
-                                logger.info(f"ActionPlanner(COMBAT): auto-fired '{mode}' on cooldown")
-                                self._send_follow_up_attack()
-                                return
-                    except Exception as e:
-                        logger.debug(f"ActionPlanner: immediate combo/skill attempt failed: {e}")
-
-                # Attack cadence - do R or T single presses
-                if time.time() - self._last_attack >= random.uniform(*self._attack_interval):
-                    ic.focus_window(self.hwnd)
-                    try:
-                        executed = False
-                        # Attempt to execute a skill or combo if enabled in config and manager available
-                        try:
-                            import skill_combo_config as scc
-                        except Exception:
-                            scc = None
-
-                        if (self.skill_combo_manager is not None and scc is not None
-                                and getattr(scc, 'SKILL_COMBO_ENABLED', True)
-                                and getattr(scc, 'COMBAT_USE_SKILLS', True)):
-                            force_mode = str(getattr(scc, 'FORCE_SKILL_BEFORE_STANDARD_MODE', 'ready_only')).lower().strip()
-                            has_health = True
-                            try:
-                                ready_combo = self.skill_combo_manager.has_ready_combo()
-                                ready_single = self.skill_combo_manager.has_available_single_skill()
-
-                                mode, success = self.skill_combo_manager.try_stealth_attack(has_health)
+                        if self.skill_combo_manager is not None:
+                            self.skill_combo_manager.set_enemy_count(enemy_count)
+                            # Try to fire any available skill/combo rapidly
+                            if random.random() < 0.7:  # 70% chance to try skill in panic
+                                mode, success = self.skill_combo_manager.try_stealth_attack(True)
                                 if mode != 'standard_attack' and success:
-                                    executed = True
-                                    logger.info(f"ActionPlanner(COMBAT): executed '{mode}' against target")
+                                    logger.info(f"ActionPlanner(PANIC): fired '{mode}'")
                                     self._send_follow_up_attack()
-                                else:
-                                    # Force a skill before standard attack depending on configured mode
-                                    if force_mode != 'disabled' and (ready_single or ready_combo):
-                                        if ready_single and self.skill_combo_manager.execute_single_skill():
-                                            executed = True
-                                            logger.info("ActionPlanner(COMBAT): forced single skill before standard attack")
-                                            self._send_follow_up_attack()
-                                        elif force_mode == 'always' and ready_combo:
-                                            if self.skill_combo_manager.try_execute_combos():
-                                                executed = True
-                                                logger.info("ActionPlanner(COMBAT): forced combo before standard attack")
-                                                self._send_follow_up_attack()
-                            except Exception as e:
-                                logger.debug(f"SkillComboManager attempt failed: {e}")
+                                    return
+                    except Exception:
+                        pass
 
-                        if not executed:
-                            # Fallback: do a standard light/heavy attack (single press)
-                            atk = random.choice(['r', 't'])
+                # SEQUENTIAL COMBAT PATTERN execution
+                pattern_interval = random.uniform(*self._pattern_action_interval)
+                if time.time() - self._last_pattern_action >= pattern_interval:
+                    current_pattern = self._combat_patterns[self._combat_pattern_index % len(self._combat_patterns)]
+                    executed = False
+                    
+                    ic.focus_window(self.hwnd)
+                    
+                    try:
+                        import skill_combo_config as scc
+                    except Exception:
+                        scc = None
+                    
+                    if current_pattern == 'skill' and self.skill_combo_manager is not None and scc is not None:
+                        # Execute a single skill
+                        if getattr(scc, 'SKILL_COMBO_ENABLED', True) and getattr(scc, 'COMBAT_USE_SKILLS', True):
+                            try:
+                                self.skill_combo_manager.set_enemy_count(enemy_count)
+                                if self.skill_combo_manager.execute_single_skill():
+                                    executed = True
+                                    logger.info(f"ActionPlanner(COMBAT): sequential SKILL (pattern {self._combat_pattern_index})")
+                                    self._send_follow_up_attack()
+                            except Exception:
+                                pass
+                    
+                    elif current_pattern == 'combo' and self.skill_combo_manager is not None and scc is not None:
+                        # Execute a combo
+                        if getattr(scc, 'SKILL_COMBO_ENABLED', True) and getattr(scc, 'COMBAT_USE_SKILLS', True):
+                            try:
+                                self.skill_combo_manager.set_enemy_count(enemy_count)
+                                if self.skill_combo_manager.try_execute_combos():
+                                    executed = True
+                                    logger.info(f"ActionPlanner(COMBAT): sequential COMBO (pattern {self._combat_pattern_index})")
+                                    self._send_follow_up_attack()
+                            except Exception:
+                                pass
+                    
+                    elif current_pattern == 'attack':
+                        # SEQUENTIAL R/T ALTERNATION with 2 second switch interval
+                        now = time.time()
+                        if self._last_attack_type is None:
+                            self._last_attack_type = random.choice(['r', 't'])
+                            self._last_attack_switch_time = now
+                        elif now - self._last_attack_switch_time >= self._attack_alternation_interval:
+                            # Switch attack type after 2 seconds
+                            self._last_attack_type = 't' if self._last_attack_type == 'r' else 'r'
+                            self._last_attack_switch_time = now
+                            logger.debug(f"ActionPlanner: switching to {'LIGHT (R)' if self._last_attack_type == 'r' else 'HEAVY (T)'}")
+                        
+                        try:
+                            ic.tap_key(self._last_attack_type)
+                            executed = True
+                            logger.info(f"ActionPlanner(COMBAT): sequential {self._last_attack_type.upper()} attack")
+                        except Exception as e:
+                            logger.error(f"ActionPlanner(COMBAT): attack failed: {e}")
+                    
+                    # Advance pattern if we executed something, or if skill/combo wasn't available, do attack instead
+                    if executed:
+                        self._combat_pattern_index += 1
+                        self._last_pattern_action = time.time()
+                        self._last_attack = time.time()
+                    elif current_pattern in ['skill', 'combo']:
+                        # Skill/combo not ready, fallback to attack
+                        try:
+                            atk = self._last_attack_type or random.choice(['r', 't'])
                             ic.tap_key(atk)
                             self._last_attack = time.time()
-                            logger.info(f"ActionPlanner(COMBAT): pressed '{atk.upper()}' (single) against target")
-                    except Exception as e:
-                        logger.error(f"ActionPlanner(COMBAT): attack press failed: {e}")
+                            self._last_pattern_action = time.time()
+                            logger.info(f"ActionPlanner(COMBAT): fallback {atk.upper()} (no skill/combo ready)")
+                        except Exception:
+                            pass
+                        self._combat_pattern_index += 1
+                
                 return
             else:
                 # combat period ended -> if enemies remain, extend; otherwise cooldown
@@ -439,9 +506,9 @@ class ActionPlanner:
                     logger.info(f"ActionPlanner: enemies still present, extending combat by {extra:.1f}s")
                     return
                 self._mode = 'cooldown'
-                self._cooldown_until = time.time() + 2.0
+                self._cooldown_until = time.time() + 1.0  # 1 second F-spam phase
                 self._last_cooldown_action = 0.0
-                logger.info("ActionPlanner: combat finished, entering 2s cooldown (F spam)")
+                logger.info("ActionPlanner: combat finished, entering 1s cooldown (F spam)")
                 return
 
         # If we had a locked target (we were attacking), but now no monster target found,
@@ -494,6 +561,20 @@ class ActionPlanner:
                 scc = None
 
             if scc is not None and getattr(scc, 'ENABLE_ROAM', False):
+                # RANDOM COMBAT TRIGGER during roaming - 30% chance to enter combat mode
+                now = time.time()
+                if now - self._last_random_combat_check >= self._random_combat_check_interval:
+                    self._last_random_combat_check = now
+                    if random.random() < self._random_combat_chance:
+                        logger.info("ActionPlanner(ROAM): RANDOM COMBAT TRIGGER - entering combat mode!")
+                        # Enter a brief combat mode even without monsters
+                        self._mode = 'combat'
+                        self._combat_until = time.time() + random.uniform(2.0, 4.0)
+                        self._current_target = None  # No specific target
+                        self._combat_pattern_index = 0
+                        self._last_pattern_action = 0.0
+                        return
+                
                 # Trigger roaming when we've had N consecutive empties
                 if self._no_mobs_count >= self._no_mobs_threshold:
                     now_roam = time.time()
@@ -525,77 +606,99 @@ class ActionPlanner:
         except Exception:
             scc = None
 
-        # Roam attempt sequence: longer forward strides + deliberate 60° camera sweeps
-        max_retries = 3
+        # 90-DEGREE CAMERA TURN ROAMING
+        # A 90-degree turn typically requires ~400-500 pixels of mouse movement
+        # This value may need adjustment based on in-game mouse sensitivity
+        TURN_90_DEGREES_PIXELS = 450
+        
+        max_retries = 5
         try:
             for attempt in range(max_retries):
-                # Forward movement is extended (~5s) to cover more ground
-                forward_sec = random.uniform(4.6, 5.3)
-                # Camera turns are driven by a continuous 2.5s swipe
-                turn_duration = 3
-                turn_segments = 24
+                # Check for monsters before each attempt
+                try:
+                    with self._lock:
+                        recent = list(self._last_detections)
+                    if self._find_all_monsters(recent):
+                        logger.info("ActionPlanner(ROAM): monsters detected, aborting roam")
+                        break
+                except Exception:
+                    pass
+                
+                # Move forward briefly (1.5-2.5s)
+                forward_sec = random.uniform(1.5, 2.5)
 
-                # move forward briefly to change position
                 try:
                     ic.focus_window(self.hwnd)
                     ic.hold_key('w', forward_sec)
+                    logger.debug(f"ActionPlanner(ROAM): moving forward {forward_sec:.1f}s")
                 except Exception as e:
-                    logger.debug(f"ActionPlanner(ROAM): failed to hold 'w' forward: {e}")
+                    logger.debug(f"ActionPlanner(ROAM): failed to hold 'w': {e}")
 
-                # tiny pause
-                time.sleep(random.uniform(0.08, 0.25))
+                time.sleep(0.05)
 
-                # perform look-around: hold right mouse and drag slowly left/right
+                # 90-DEGREE CAMERA TURN - alternate left/right
                 try:
                     ic.focus_window(self.hwnd)
-                    # Alternate directions between attempts for broader coverage
-                    dir_right = (attempt % 2 == 0)
-                    direction = 1 if dir_right else -1
+                    # Alternate: even attempts turn right, odd turn left
+                    turn_right = (attempt % 2 == 0)
+                    direction = 1 if turn_right else -1
+                    turn_pixels = TURN_90_DEGREES_PIXELS * direction
+                    
+                    logger.info(f"ActionPlanner(ROAM): 90° turn {'RIGHT' if turn_right else 'LEFT'}")
+                    
+                    # Hold right mouse and perform the turn in segments for smoothness
                     ic.hold_mouse_down('right')
-                except Exception as e:
-                    logger.warning(f"ActionPlanner: hold_mouse_down failed during roam: {e}")
+                    
+                    # Split the turn into 6 segments for smoother camera movement
+                    segments = 6
+                    segment_pixels = turn_pixels // segments
+                    segment_delay = 0.08  # 80ms per segment
+                    
+                    for seg in range(segments):
+                        ic.move_mouse_relative(segment_pixels, 0, steps=1, duration=0.02)
+                        time.sleep(segment_delay)
+                        
+                        # Check for monsters mid-turn
+                        if seg == segments // 2:
+                            try:
+                                with self._lock:
+                                    recent = list(self._last_detections)
+                                if self._find_all_monsters(recent):
+                                    logger.info("ActionPlanner(ROAM): monsters found mid-turn!")
+                                    ic.release_mouse('right')
+                                    raise StopIteration()
+                            except StopIteration:
+                                raise
+                            except Exception:
+                                pass
+                    
+                    ic.release_mouse('right')
+                    
+                except StopIteration:
                     break
-
-                try:
-                    segment_delay = turn_duration / max(1, turn_segments)
-                    for _ in range(turn_segments):
-                        # Human-like horizontal swipe with slight jitter
-                        step_dx = direction * random.randint(8, 14)
-                        step_dy = random.randint(-2, 2)
-                        ic.move_mouse_relative(step_dx, step_dy, steps=1, duration=segment_delay * 0.7)
-                        time.sleep(segment_delay * 0.3)
                 except Exception as e:
-                    logger.debug(f"ActionPlanner(ROAM): move_mouse_by failed: {e}")
-                finally:
+                    logger.debug(f"ActionPlanner(ROAM): camera turn failed: {e}")
                     try:
                         ic.release_mouse('right')
                     except Exception:
                         pass
 
-                # after each swipe, pause briefly to allow the detection loop to produce new frames
-                pause_after = random.uniform(0.35, 0.6)
-                time.sleep(pause_after)
+                # Brief pause for detection
+                time.sleep(0.15)
 
-                # Check if any monsters were detected since we started roaming
+                # Check for monsters after turn
                 try:
                     with self._lock:
                         recent = list(self._last_detections)
                 except Exception:
                     recent = list(self._last_detections)
 
-                found = False
-                try:
-                    found = bool(self._find_all_monsters(recent))
-                except Exception:
-                    found = False
-
-                if found:
-                    logger.info("ActionPlanner(ROAM): detected monsters during roam, aborting roam and returning to scanning")
+                if self._find_all_monsters(recent):
+                    logger.info("ActionPlanner(ROAM): detected monsters, returning to scanning")
                     break
 
-                # small random pause between attempts
-                time.sleep(random.uniform(0.35, 0.6))
+                time.sleep(0.1)
 
         finally:
-            # Ensure roaming flag is cleared
             self._roaming = False
+            logger.debug("ActionPlanner(ROAM): roam cycle complete")
